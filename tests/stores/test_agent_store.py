@@ -233,21 +233,15 @@ def test_create_agent_has_version_1(agent_store: SqlAlchemyAgentStore) -> None:
 
 def test_get_names_returns_id_to_name_mapping(agent_store: SqlAlchemyAgentStore) -> None:
     """get_names batch-fetches agent names by ID."""
-    agent_store.create(
-        agent_id="ag_names_a", name="alpha", bundle_location="ag_names_a/hash"
-    )
-    agent_store.create(
-        agent_id="ag_names_b", name="beta", bundle_location="ag_names_b/hash"
-    )
+    agent_store.create(agent_id="ag_names_a", name="alpha", bundle_location="ag_names_a/hash")
+    agent_store.create(agent_id="ag_names_b", name="beta", bundle_location="ag_names_b/hash")
     result = agent_store.get_names(["ag_names_a", "ag_names_b"])
     assert result == {"ag_names_a": "alpha", "ag_names_b": "beta"}
 
 
 def test_get_names_omits_missing_ids(agent_store: SqlAlchemyAgentStore) -> None:
     """get_names silently omits IDs not found in the store."""
-    agent_store.create(
-        agent_id="ag_names_c", name="gamma", bundle_location="ag_names_c/hash"
-    )
+    agent_store.create(agent_id="ag_names_c", name="gamma", bundle_location="ag_names_c/hash")
     result = agent_store.get_names(["ag_names_c", "ag_nonexistent"])
     assert result == {"ag_names_c": "gamma"}
 
@@ -271,4 +265,5 @@ def test_list_empty(agent_store: SqlAlchemyAgentStore) -> None:
 
 def test_delete_nonexistent_returns_false(agent_store: SqlAlchemyAgentStore) -> None:
     """delete returns False for an ID that was never created."""
-    assert agent_store.delete("ag_never_existed") is False
+    result = agent_store.delete("ag_never_existed")
+    assert result is False

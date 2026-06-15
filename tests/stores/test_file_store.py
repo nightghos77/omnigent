@@ -199,4 +199,5 @@ def test_list_empty(file_store: SqlAlchemyFileStore) -> None:
 
 def test_delete_nonexistent_returns_false(file_store: SqlAlchemyFileStore) -> None:
     """delete returns False for an ID that was never created."""
-    assert file_store.delete("file_never_existed") is False
+    result = file_store.delete("file_never_existed")
+    assert result is False

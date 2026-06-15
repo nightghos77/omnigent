@@ -511,12 +511,8 @@ def test_get_default_returns_none_for_session_policy(
 
 def test_list_defaults_returns_all_in_order(store: SqlAlchemyPolicyStore) -> None:
     """list_defaults returns all default policies ordered by created_at ASC."""
-    store.create_default(
-        policy_id="dpol_l1", name="first", type="python", handler="mod.a"
-    )
-    store.create_default(
-        policy_id="dpol_l2", name="second", type="python", handler="mod.b"
-    )
+    store.create_default(policy_id="dpol_l1", name="first", type="python", handler="mod.a")
+    store.create_default(policy_id="dpol_l2", name="second", type="python", handler="mod.b")
     defaults = store.list_defaults()
     assert len(defaults) == 2
     assert defaults[0].name == "first"

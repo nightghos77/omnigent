@@ -943,10 +943,9 @@ def test_check_access_public_grant_fallback(store: SqlAlchemyPermissionStore, db
     assert store.check_access("alice", conv, required_level=2) is False
 
 
-def test_check_access_none_user(store: SqlAlchemyPermissionStore, db_uri: str) -> None:
+def test_check_access_none_user(store: SqlAlchemyPermissionStore) -> None:
     """check_access returns False when user_id is None."""
-    conv = _create_conversation(db_uri)
-    assert store.check_access(None, conv, required_level=1) is False
+    assert store.check_access(None, "conv_any", required_level=1) is False
 
 
 def test_check_access_no_grants(store: SqlAlchemyPermissionStore, db_uri: str) -> None:
@@ -968,7 +967,9 @@ def test_get_permission_level_direct_grant(store: SqlAlchemyPermissionStore, db_
     assert store.get_permission_level("alice", conv) == 3
 
 
-def test_get_permission_level_admin_gets_owner(store: SqlAlchemyPermissionStore, db_uri: str) -> None:
+def test_get_permission_level_admin_gets_owner(
+    store: SqlAlchemyPermissionStore, db_uri: str
+) -> None:
     """get_permission_level returns LEVEL_OWNER for admin users."""
     from omnigent.server.auth import LEVEL_OWNER
 
@@ -978,7 +979,9 @@ def test_get_permission_level_admin_gets_owner(store: SqlAlchemyPermissionStore,
     assert store.get_permission_level("admin_user", conv) == LEVEL_OWNER
 
 
-def test_get_permission_level_public_fallback(store: SqlAlchemyPermissionStore, db_uri: str) -> None:
+def test_get_permission_level_public_fallback(
+    store: SqlAlchemyPermissionStore, db_uri: str
+) -> None:
     """get_permission_level falls back to public grant when no direct grant."""
     from omnigent.server.auth import RESERVED_USER_PUBLIC
 
@@ -1024,7 +1027,9 @@ def test_set_admin_demotes_user(store: SqlAlchemyPermissionStore) -> None:
 # ── list_for_sessions (bulk) ──────────────────────────────────────────────────
 
 
-def test_list_for_sessions_returns_grouped_grants(store: SqlAlchemyPermissionStore, db_uri: str) -> None:
+def test_list_for_sessions_returns_grouped_grants(
+    store: SqlAlchemyPermissionStore, db_uri: str
+) -> None:
     """list_for_sessions returns grants grouped by conversation_id."""
     _ensure_user(store, "alice")
     _ensure_user(store, "bob")
