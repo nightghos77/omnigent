@@ -71,12 +71,9 @@ ToolExecutor: TypeAlias = Callable[[str, dict[str, Any]], Awaitable[Any]]  # typ
 # ``None``).
 _DEFAULT_CURSOR_MODEL = "auto"
 
-# Upper bound (seconds) on a single bridged-tool call. ``sys_session_send`` and
-# friends can dispatch long-running sub-agents, so this is deliberately generous
-# — its job is to stop a wedged tool from blocking the SDK's daemon callback
-# thread (and the Cursor turn) *forever*, surfacing a tool error instead of an
-# unbounded hang. It is a wall-clock cap on the daemon thread's wait, not a
-# per-turn budget.
+# Upper bound (seconds) on one bridged-tool call: generous (sub-agent dispatches
+# can run for minutes) but finite, so a wedged tool surfaces a timeout error
+# instead of blocking the SDK's daemon callback thread forever.
 _TOOL_CALL_TIMEOUT_S = 1800.0
 
 
@@ -427,13 +424,10 @@ class CursorExecutor(Executor):
                 return _tool_error_payload(
                     f"Tool {tool_name!r} timed out after {_TOOL_CALL_TIMEOUT_S:.0f}s."
                 )
-            # A failed *or cancelled* coroutine: future.result() raises the
-            # coroutine's exception, or concurrent.futures.CancelledError (an
-            # Exception subclass) when the future is cancelled. Catch Exception —
-            # not BaseException — so any tool failure becomes a tool error
-            # instead of crashing the daemon thread, while KeyboardInterrupt /
-            # SystemExit still propagate.
-            except Exception as exc:  # noqa: BLE001 — thread boundary: failures become tool errors
+            # Exception (not BaseException) still covers a cancelled coroutine —
+            # future.result() raises concurrent.futures.CancelledError, an
+            # Exception — while letting KeyboardInterrupt / SystemExit propagate.
+            except Exception as exc:  # noqa: BLE001 — surface as a tool error
                 future.cancel()
                 return _tool_error_payload(f"Tool {tool_name!r} failed: {exc}")
             return _encode_tool_result(result)
