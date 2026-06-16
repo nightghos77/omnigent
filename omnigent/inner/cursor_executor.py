@@ -562,9 +562,21 @@ class CursorExecutor(Executor):
 
 
 async def _safe_close(obj: Any) -> None:  # type: ignore[explicit-any]
-    """Best-effort ``await obj.close()``; a teardown failure must not mask the
-    original error or leave ``close()`` raising."""
+    """Best-effort async close of a ``cursor_sdk`` object, preferring ``aclose()``.
+
+    The SDK's :class:`cursor_sdk.AsyncClient` exposes only ``aclose()`` — and
+    that is the *only* path that terminates the launched bridge subprocess and
+    shuts down the tool-callback server's daemon HTTP thread. :class:`AsyncAgent`
+    exposes ``close()`` instead. Calling a method the object doesn't have raised
+    ``AttributeError`` (swallowed below), so the client was never torn down and
+    every session leaked its bridge subprocess + daemon thread. Prefer ``aclose``
+    and fall back to ``close``; a teardown failure must not mask the original
+    error or leave the closer raising.
+    """
+    closer = getattr(obj, "aclose", None) or getattr(obj, "close", None)
+    if closer is None:
+        return
     try:
-        await obj.close()
+        await closer()
     except Exception as exc:  # noqa: BLE001 — best-effort teardown
         logger.debug("CursorExecutor: close failed: %s", exc)
