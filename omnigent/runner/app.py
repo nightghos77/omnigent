@@ -6738,9 +6738,7 @@ def create_runner_app(
         target = instance.tmux_target
 
         try:
-            await asyncio.to_thread(
-                _inject_codex_compact, socket_path, target
-            )
+            await asyncio.to_thread(_inject_codex_compact, socket_path, target)
         except (RuntimeError, ValueError) as exc:
             return JSONResponse(
                 status_code=503,
