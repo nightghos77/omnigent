@@ -115,7 +115,7 @@ daytona = ["daytona>=0.180,<1"]
 # CoreWeave Sandbox launcher (`omnigent sandbox --provider cwsandbox` and
 # server-managed `sandbox.provider: cwsandbox`).
 # Same lazy-import posture as above. Pre-1.0 SDK: pin minor.
-cwsandbox = ["cwsandbox>=0.26,<1"]
+cwsandbox = ["cwsandbox>=0.24,<1"]
 # MLflow tracing is opt-in: tracing is disabled by default and the
 # server degrades gracefully when mlflow is absent, so the (heavy) mlflow
 # dependency only installs for users who want it (`omnigent[tracing]`).
