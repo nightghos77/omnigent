@@ -19,14 +19,18 @@ Run explicitly with Databricks credentials, for example::
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import httpx
 import pytest
 
 from tests.e2e.conftest import (
+    configure_mock_llm,
     create_runner_bound_session,
     poll_session_until_terminal,
+    register_inline_agent,
+    reset_mock_llm,
     send_user_message_to_session,
     upload_agent,
 )
@@ -61,8 +65,10 @@ def test_live_sessions_path_round_trips_through_openai_agents_harness(
     live_runner_id: str,
     databricks_workspace_host: str | None,
     tmp_path: Path,
+    using_mock_llm: bool,
+    mock_llm_server_url: str | None,
 ) -> None:
-    """A real harness-backed session turn reaches the LLM and returns text.
+    """A harness-backed session turn reaches the LLM and returns text.
 
     Uses a tiny one-off Omnigent YAML with
     ``executor.harness: openai-agents`` because that harness is pure
@@ -70,24 +76,40 @@ def test_live_sessions_path_round_trips_through_openai_agents_harness(
     through the maintained sessions route rather than the deprecated
     responses dispatch-fork path.
     """
-    agent_name = upload_agent(
-        http_client,
-        _write_openai_agents_smoke_yaml(tmp_path),
-        rewrite_model_for_databricks=databricks_workspace_host is not None,
-    )
+    marker = "SESSIONS_LIVE_SMOKE_OK"
+
+    if using_mock_llm:
+        reset_mock_llm(mock_llm_server_url)
+        model = f"mock-smoke-{uuid.uuid4().hex[:6]}"
+        agent_name = register_inline_agent(
+            http_client,
+            name=f"smoke-{uuid.uuid4().hex[:6]}",
+            harness="openai-agents",
+            model=model,
+            profile="",
+            prompt="You are a terse smoke-test assistant.",
+            mock_llm_base_url=(f"{mock_llm_server_url}/v1" if mock_llm_server_url else None),
+        )
+        configure_mock_llm(mock_llm_server_url, [{"text": marker}], key=model)
+    else:
+        agent_name = upload_agent(
+            http_client,
+            _write_openai_agents_smoke_yaml(tmp_path),
+            rewrite_model_for_databricks=databricks_workspace_host is not None,
+        )
+
     session_id = create_runner_bound_session(
         http_client,
         agent_name=agent_name,
         runner_id=live_runner_id,
     )
 
-    marker = "SESSIONS_LIVE_SMOKE_OK"
     response_id = send_user_message_to_session(
         http_client,
         session_id=session_id,
         content=(
-            f"Reply with exactly the literal string {marker} and nothing else. "
-            "Do not call tools or sub-agents."
+            f"Reply with exactly the literal string {marker} "
+            "and nothing else. Do not call tools or sub-agents."
         ),
     )
     body = poll_session_until_terminal(

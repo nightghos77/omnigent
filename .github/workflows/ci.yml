@@ -93,7 +93,12 @@ jobs:
           # xdist workers would each create their own session fixtures.
           # The e2e tests that need a real LLM auto-skip via using_mock_llm.
           - group: integration-mock
-            paths: tests/integration tests/e2e/test_steering.py tests/e2e/test_journey_file_upload_analysis.py
+            paths: >-
+              tests/integration
+              tests/e2e/test_steering.py
+              tests/e2e/test_journey_file_upload_analysis.py
+              tests/e2e/test_sessions_live_smoke.py
+              tests/e2e/test_file_tools.py
             workers: "0"
           # Catch-all so new top-level tests/<dir>/ are covered automatically.
           - group: misc
