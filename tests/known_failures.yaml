@@ -286,12 +286,6 @@ skips:
     cluster: run-ap-examples-harness
     mode: skip
 
-  - id: tests/e2e/test_policies_e2e.py::test_label_gate_untainted_conversation_passes
-    reason: "Shard 1 bulk: label-gate untainted-pass; policy cluster."
-    issue: 476
-    cluster: policy-guardrails
-    mode: skip
-
   - id: tests/e2e/test_repl_approval_e2e.py::test_repl_approve_always_caches_for_later_turns
     reason: "Shard 1 bulk: REPL approval pexpect-timeout family."
     issue: 532
@@ -395,20 +389,14 @@ skips:
     cluster: subagent-supervisor-routing
     mode: skip
 
-  - id: tests/e2e/test_policies_e2e.py::test_policy_gate_allows_clean_message
-    reason: "Shard 3 bulk: policy-gate clean-pass. Policy cluster."
+  - id: tests/e2e/test_policies_e2e.py::test_streaming_api_explicit_approval_allows_llm
+    reason: "Shard 3 bulk: streaming-API explicit approval. Policy / approval cluster."
     issue: 476
     cluster: policy-guardrails
     mode: skip
 
   - id: tests/e2e/test_policies_e2e.py::test_policy_gate_deny_persists_to_history
-    reason: "Shard 3 bulk: policy-gate deny persists to history. Policy cluster."
-    issue: 476
-    cluster: policy-guardrails
-    mode: skip
-
-  - id: tests/e2e/test_policies_e2e.py::test_streaming_api_explicit_approval_allows_llm
-    reason: "Shard 3 bulk: streaming-API explicit approval. Policy / approval cluster."
+    reason: "Sessions API migration reaches inline INPUT DENY, but the synchronous DENY verdict is not persisted as an assistant sentinel in conversation_items; needs product-side persistence fix before unsuppressing."
     issue: 476
     cluster: policy-guardrails
     mode: skip
@@ -805,12 +793,6 @@ skips:
     issue: 483
     cluster: policy-guardrails
     mode: skip
-  - id: tests/e2e/test_policies_e2e.py::test_no_guardrails_agent_unaffected
-    reason: "Force-merge backlog (policy cluster). First observed failing at 305e9bb9 (2026-05-23T06:06:59Z, E2E)."
-    issue: 0
-    cluster: policy-guardrails
-    mode: skip
-
   # Cluster: claude_coder sandbox enforcement. All 5 tests in
   # test_claude_coder_sandbox.py flipped together — suggests the
   # sandbox enforcement path or its fixture regressed.
