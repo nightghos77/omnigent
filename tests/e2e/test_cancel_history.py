@@ -24,8 +24,25 @@ from tests.e2e.conftest import (
     send_user_message_to_session,
 )
 
+_POLL_INTERVAL_SECONDS = 0.3
+_SESSION_ITEMS_PAGE_SIZE = 1000
+_SESSION_RUNNING_STATUSES = {"running"}
+_SESSION_PRE_RUNNING_STATUSES = {"idle"}
+_SESSION_NONTERMINAL_STATUSES = {"idle", "running"}
+_SESSION_TERMINAL_ERROR_STATUSES = {"failed"}
 
-def _wait_for_in_progress(
+# The server persists cancellation history as a synthetic user message today.
+# There is no stable structured cancellation item type yet, so keep the
+# wording dependency centralized and documented for future server changes.
+_CANCELLATION_MARKER_TEXT = "interrupted"
+
+# Sequencing heuristic: the interrupt endpoint can acknowledge before async
+# teardown has fully settled. We do not have a response-level in-flight signal
+# here, so keep the stable-idle hold explicit rather than weaker.
+_INTERRUPT_IDLE_HOLD_SECONDS = 1.0
+
+
+def _wait_for_session_running(
     client: httpx.Client,
     session_id: str,
     timeout: float = 60,
@@ -43,11 +60,12 @@ def _wait_for_in_progress(
         resp = client.get(f"/v1/sessions/{session_id}")
         resp.raise_for_status()
         body = resp.json()
-        if body["status"] == "running":
+        status = body["status"]
+        if status in _SESSION_RUNNING_STATUSES:
             return
-        if body["status"] in ("idle", "failed"):
-            raise AssertionError(f"Session reached terminal state {body['status']} before running")
-        time.sleep(0.3)
+        if status not in _SESSION_PRE_RUNNING_STATUSES:
+            raise AssertionError(f"Session reached state {status!r} before running: {body}")
+        time.sleep(_POLL_INTERVAL_SECONDS)
     raise AssertionError(f"Session {session_id} didn't reach running within {timeout}s")
 
 
@@ -78,28 +96,53 @@ def _wait_for_cancellation_marker(
     deadline = time.monotonic() + timeout
     last_items: list[dict[str, Any]] = []
     while time.monotonic() < deadline:
-        items_resp = client.get(
-            f"/v1/sessions/{session_id}/items",
-            params={"order": "desc", "limit": 20},
-        )
-        items_resp.raise_for_status()
-        last_items = items_resp.json()["data"]
-        cancellation_items = [
-            item
-            for item in last_items
-            if item.get("type") == "message"
-            and item.get("role") == "user"
-            and any("interrupted" in c.get("text", "") for c in item.get("content", []))
-        ]
+        last_items = _list_all_session_items(client, session_id)
+        cancellation_items = _filter_cancellation_marker_items(last_items)
         if cancellation_items:
             return cancellation_items
-        time.sleep(0.3)
+        time.sleep(_POLL_INTERVAL_SECONDS)
     raise AssertionError(
         f"Expected a cancellation marker within {timeout}s. Last items: {last_items}"
     )
 
 
-def _wait_for_idle(client: httpx.Client, session_id: str, timeout: float = 30) -> None:
+def _list_all_session_items(client: httpx.Client, session_id: str) -> list[dict[str, Any]]:
+    """Return all currently persisted session items in one paginated snapshot."""
+    items: list[dict[str, Any]] = []
+    after: str | None = None
+    while True:
+        params = {"order": "asc", "limit": _SESSION_ITEMS_PAGE_SIZE}
+        if after is not None:
+            params["after"] = after
+        items_resp = client.get(f"/v1/sessions/{session_id}/items", params=params)
+        items_resp.raise_for_status()
+        page = items_resp.json()
+        page_items = page["data"]
+        items.extend(page_items)
+        if not page.get("has_more"):
+            return items
+        after = page.get("last_id")
+        if after is None:
+            raise AssertionError(f"Items page had has_more without last_id: {page}")
+
+
+def _filter_cancellation_marker_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return persisted synthetic user messages that mark an interrupted turn."""
+    return [
+        item
+        for item in items
+        if item.get("type") == "message"
+        and item.get("role") == "user"
+        and any(_CANCELLATION_MARKER_TEXT in c.get("text", "") for c in item.get("content", []))
+    ]
+
+
+def _wait_for_idle(
+    client: httpx.Client,
+    session_id: str,
+    *,
+    timeout: float = 30,
+) -> None:
     """Poll until the interrupted session finishes teardown."""
     deadline = time.monotonic() + timeout
     last_body: dict[str, Any] = {}
@@ -108,16 +151,21 @@ def _wait_for_idle(client: httpx.Client, session_id: str, timeout: float = 30) -
         resp = client.get(f"/v1/sessions/{session_id}")
         resp.raise_for_status()
         last_body = resp.json()
-        if last_body.get("status") == "idle":
+        status = last_body.get("status")
+        if status in _SESSION_TERMINAL_ERROR_STATUSES:
+            raise AssertionError(f"Session failed during interrupt teardown: {last_body}")
+        if status not in _SESSION_NONTERMINAL_STATUSES:
+            raise AssertionError(
+                f"Session reached unexpected terminal state during interrupt teardown: {last_body}"
+            )
+        if status == "idle":
             if idle_since is None:
                 idle_since = time.monotonic()
-            elif time.monotonic() - idle_since >= 1.0:
+            elif time.monotonic() - idle_since >= _INTERRUPT_IDLE_HOLD_SECONDS:
                 return
         else:
             idle_since = None
-        if last_body.get("status") == "failed":
-            raise AssertionError(f"Session failed during interrupt teardown: {last_body}")
-        time.sleep(0.3)
+        time.sleep(_POLL_INTERVAL_SECONDS)
     raise AssertionError(
         f"Session {session_id} did not become idle within {timeout}s: {last_body}"
     )
@@ -166,7 +214,7 @@ def test_cancel_appends_history_marker_and_followup_sees_it(
     )
 
     # Step 2: wait for it to start, then interrupt via the sessions API.
-    _wait_for_in_progress(http_client, session_id, timeout=60)
+    _wait_for_session_running(http_client, session_id, timeout=60)
     cancel_resp = http_client.post(f"/v1/sessions/{session_id}/events", json={"type": "interrupt"})
     cancel_resp.raise_for_status()
     assert cancel_resp.status_code in (202, 204)
@@ -176,7 +224,9 @@ def test_cancel_appends_history_marker_and_followup_sees_it(
     # persistence task necessarily completes, so poll the session items.
     cancellation_items = _wait_for_cancellation_marker(http_client, session_id)
     assert len(cancellation_items) == 1, (
-        f"Expected exactly 1 cancellation marker, found {len(cancellation_items)}."
+        f"Expected exactly 1 cancellation marker, found {len(cancellation_items)}. "
+        f"Cancellation items: {cancellation_items}. "
+        f"Items: {_list_all_session_items(http_client, session_id)}"
     )
     _wait_for_idle(http_client, session_id)
 
@@ -245,7 +295,7 @@ def test_cancel_mid_tool_call_followup_succeeds(
     )
 
     # Step 2: wait for running (tools should be executing), cancel.
-    _wait_for_in_progress(http_client, session_id, timeout=60)
+    _wait_for_session_running(http_client, session_id, timeout=60)
     # Brief delay so tool calls are persisted.
     time.sleep(2)
     cancel_resp = http_client.post(f"/v1/sessions/{session_id}/events", json={"type": "interrupt"})

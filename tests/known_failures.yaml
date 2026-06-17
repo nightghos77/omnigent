@@ -840,8 +840,6 @@ skips:
     cluster: sandbox-deps-env
     mode: skip
 
-  # Cluster: cancel/history.
-
   # Cluster: databricks_supervisor harness parametrizations broken
   # across multiple unrelated test files (yaml hello world, real
   # hello world, coding supervisor with forks). Likely a single
