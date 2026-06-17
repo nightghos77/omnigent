@@ -2883,6 +2883,16 @@ def _resolved_workdir_for_spec(spec: Any, fallback: Path | None) -> Path | None:
     return _resolved_spec_workdir(spec) or fallback
 
 
+def _is_spec_local_native_python_tool(spec: Any, tool_name: str) -> bool:
+    """Return whether *tool_name* is a spec-declared native python tool."""
+    unwrapped = _unwrap_resolved_spec(spec)
+    return any(
+        getattr(info, "name", None) == tool_name
+        and getattr(info, "language", None) in ("python", "omnigent-python-callable")
+        for info in getattr(unwrapped, "local_tools", [])
+    )
+
+
 @dataclasses.dataclass(frozen=True)
 class _SessionSnapshot:
     """One ``GET /v1/sessions/{id}`` projected for all runner readers.
@@ -9080,13 +9090,9 @@ def create_runner_app(
                                     _spec_for_dispatch_hint = _unwrap_resolved_spec(
                                         _session_spec_cache.get(conv_id)
                                     )
-                                    _is_spec_local = any(
-                                        getattr(info, "name", None) == tool_name
-                                        and getattr(info, "language", None)
-                                        in ("python", "omnigent-python-callable")
-                                        for info in getattr(
-                                            _spec_for_dispatch_hint, "local_tools", []
-                                        )
+                                    _is_spec_local = _is_spec_local_native_python_tool(
+                                        _spec_for_dispatch_hint,
+                                        tool_name,
                                     )
                                     if (
                                         not _is_spec_local
@@ -9116,13 +9122,9 @@ def create_runner_app(
                                             _spec_for_dispatch_hint = _unwrap_resolved_spec(
                                                 _spec_for_dispatch_hint_entry
                                             )
-                                            _is_spec_local = any(
-                                                getattr(info, "name", None) == tool_name
-                                                and getattr(info, "language", None)
-                                                in ("python", "omnigent-python-callable")
-                                                for info in getattr(
-                                                    _spec_for_dispatch_hint, "local_tools", []
-                                                )
+                                            _is_spec_local = _is_spec_local_native_python_tool(
+                                                _spec_for_dispatch_hint,
+                                                tool_name,
                                             )
                                     _should_dispatch = _should_dispatch_tool_locally(
                                         tool_name,
@@ -9148,15 +9150,17 @@ def create_runner_app(
                                             )
                                             return
                                         # Bundle-deployed agents carry their own
-                                        # workdir (where tools/python/*.py live).
-                                        # Dispatch native tools against it, falling
-                                        # back to runner_workspace for non-bundle
-                                        # agents. This mirrors schema generation,
-                                        # which already builds ToolManager with the
-                                        # resolved spec workdir.
-                                        _dispatch_workdir = _resolved_workdir_for_spec(
-                                            _spec_for_dispatch_entry,
-                                            runner_workspace,
+                                        # workdir for spec-local native python
+                                        # tools (where tools/python/*.py live).
+                                        # Builtins / OS-env / relayed tools must
+                                        # keep the caller's runner workspace.
+                                        _dispatch_workdir = (
+                                            _resolved_workdir_for_spec(
+                                                _spec_for_dispatch_entry,
+                                                runner_workspace,
+                                            )
+                                            if _is_spec_local
+                                            else runner_workspace
                                         )
                                         _spec_for_dispatch = _unwrap_resolved_spec(
                                             _spec_for_dispatch_entry
@@ -11964,6 +11968,12 @@ def create_runner_app(
                         except Exception:  # noqa: BLE001
                             pass
                 _agent_id_local = _session_agent_ids.get(session_id)
+                dispatch_workspace = (
+                    spec_workdir
+                    if spec_workdir is not None
+                    and _is_spec_local_native_python_tool(spec, tool_name)
+                    else runner_workspace
+                )
                 try:
                     output = await execute_tool(
                         tool_name=tool_name,
@@ -11976,7 +11986,7 @@ def create_runner_app(
                         task_id=session_id,
                         agent_id=_agent_id_local,
                         agent_name=getattr(spec, "name", None),
-                        runner_workspace=spec_workdir or runner_workspace,
+                        runner_workspace=dispatch_workspace,
                         mcp_manager=None,
                         session_inbox=_session_inboxes.get(session_id),
                         session_async_tasks=_session_async_tasks.get(session_id),
