@@ -115,9 +115,14 @@ jobs:
           ")
 
           # Search for potential duplicates (top 5 open issues with similar terms).
-          gh search issues --repo "$REPO" --state open --limit 5 \
-            --json number,title \
-            "$terms" > /tmp/duplicates.json 2>/dev/null || echo "[]" > /tmp/duplicates.json
+          # Skip search if terms are empty to avoid noisy/random results.
+          if [ -n "$terms" ]; then
+            gh search issues --repo "$REPO" --state open --limit 5 \
+              --json number,title \
+              "$terms" > /tmp/duplicates.json 2>/dev/null || echo "[]" > /tmp/duplicates.json
+          else
+            echo "[]" > /tmp/duplicates.json
+          fi
 
           # Filter out the current issue from duplicate candidates.
           python3 -c "
@@ -330,13 +335,19 @@ jobs:
           }
           ALLOWED_PRIORITIES = {"P0-critical", "P1-high", "P2-medium", "P3-low"}
 
+          # Read existing labels so we only remove labels that are present
+          # (gh issue edit --remove-label errors on missing labels).
+          issue_data = json.loads(pathlib.Path("/tmp/issue.json").read_text())
+          existing_labels = {l["name"] for l in issue_data.get("labels", [])}
+
           labels_add = []
           labels_remove = []
           dup = None
 
           if result.get("needs_info"):
               labels_add.append("needs-info")
-              labels_remove.append("needs-triage")
+              if "needs-triage" in existing_labels:
+                  labels_remove.append("needs-triage")
               # needs-info issues are still triaged — they just need more info.
               labels_add.append("triaged")
           else:
@@ -375,7 +386,8 @@ jobs:
               else:
                   dup = None  # discard hallucinated duplicate
 
-              labels_remove.append("needs-triage")
+              if "needs-triage" in existing_labels:
+                  labels_remove.append("needs-triage")
               labels_add.append("triaged")
 
           # Collect validated components for domain-aware assignment.
