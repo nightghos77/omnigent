@@ -37,12 +37,12 @@
 # Core agent runtime & harnesses
 /omnigent/inner/             @SabhyaC26 @TomeHirata @dhruv0811 @dbczumar
 /omnigent/runner/            @SabhyaC26 @TomeHirata @serena-ruan @dhruv0811
-/omnigent/runtime/           @TomeHirata @SabhyaC26 @dhruv0811 @ckcuslife-source
-/omnigent/server/            @dhruv0811 @dbczumar @ckcuslife-source @TomeHirata
+/omnigent/runtime/           @TomeHirata @SabhyaC26 @dhruv0811
+/omnigent/server/            @dhruv0811 @dbczumar @TomeHirata @SabhyaC26
 /omnigent/onboarding/        @SabhyaC26 @dhruv0811 @dbczumar @bbqiu
 /omnigent/policies/          @TomeHirata @SabhyaC26 @dhruv0811 @PattaraS
-/omnigent/spec/              @SabhyaC26 @dhruv0811 @ckcuslife-source
-/omnigent/llms/              @dhruv0811 @PattaraS @ckcuslife-source
+/omnigent/spec/              @SabhyaC26 @dhruv0811
+/omnigent/llms/              @dhruv0811 @PattaraS
 /omnigent/host/              @fanzeyi @dhruv0811 @dbczumar @TomeHirata
 /omnigent/sandbox/           @dhruv0811 @SabhyaC26
 /omnigent/environments/      @dhruv0811
