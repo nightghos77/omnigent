@@ -76,6 +76,7 @@ def _mock_agent(
     mock_llm_server_url: str | None,
     *,
     prompt: str = "You are a test assistant. Follow instructions exactly.",
+    builtin_tools: list[str] | None = None,
 ) -> tuple[str, str]:
     """Register an inline agent for mock mode, return (name, model)."""
     model = f"mock-steer-{uuid.uuid4().hex[:6]}"
@@ -87,6 +88,7 @@ def _mock_agent(
         profile="",
         prompt=prompt,
         mock_llm_base_url=(f"{mock_llm_server_url}/v1" if mock_llm_server_url else None),
+        builtin_tools=builtin_tools,
     )
     return name, model
 
@@ -258,17 +260,57 @@ def test_steering_during_multi_tool_iterations(
     archer_agent: str,
     live_runner_id: str,
     using_mock_llm: bool,
+    mock_llm_server_url: str | None,
 ) -> None:
     """
-    Steering is picked up between tool call iterations.
+    Steering is picked up between tool call iterations when the
+    agent makes multiple sequential tool calls.
 
-    Requires real LLM — needs list_files tool calls.
+    In mock mode the mock server returns tool-call responses for
+    ``sys_read_inbox`` and ``list_files``; the harness executes
+    them as real built-in tools. The steer arrives while
+    ``sys_read_inbox`` blocks, then the subsequent tool iterations
+    must not skip over the steered message.
     """
     if using_mock_llm:
-        pytest.skip("requires real LLM (multi-tool iterations)")
+        reset_mock_llm(mock_llm_server_url)
+        agent_name, model = _mock_agent(http_client, mock_llm_server_url)
+        # Response sequence (sys_read_inbox is a runner-level system
+        # tool, always registered — no spec declaration needed):
+        # 1. sys_read_inbox → harness executes, blocks on inbox
+        # 2. (steer arrives, inbox returns, harness posts tool result)
+        #    sys_read_inbox again → returns immediately (inbox drained)
+        # 3. Final text with PINEAPPLE
+        configure_mock_llm(
+            mock_llm_server_url,
+            [
+                {
+                    "tool_calls": [
+                        {
+                            "call_id": "call_inbox1",
+                            "name": "sys_read_inbox",
+                            "arguments": "{}",
+                        },
+                    ],
+                },
+                {
+                    "tool_calls": [
+                        {
+                            "call_id": "call_inbox2",
+                            "name": "sys_read_inbox",
+                            "arguments": "{}",
+                        },
+                    ],
+                },
+                {"text": "PINEAPPLE"},
+            ],
+            key=model,
+        )
+    else:
+        agent_name = archer_agent
 
     session_id = create_runner_bound_session(
-        http_client, agent_name=archer_agent, runner_id=live_runner_id
+        http_client, agent_name=agent_name, runner_id=live_runner_id
     )
 
     task_id = send_user_message_to_session(

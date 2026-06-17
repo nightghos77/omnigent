@@ -735,6 +735,7 @@ def register_inline_agent(
     profile: str,
     prompt: str,
     mock_llm_base_url: str | None = None,
+    builtin_tools: list[str] | None = None,
 ) -> str:
     """
     Register a single-file omnigent agent built in-memory.
@@ -754,6 +755,8 @@ def register_inline_agent(
     :param mock_llm_base_url: When set, bake an ``auth.type: api_key``
         block into the executor so the harness hits the mock server
         instead of ``api.openai.com``.
+    :param builtin_tools: When set, add a ``tools.builtins`` list to
+        the agent spec, e.g. ``["list_files", "upload_file"]``.
     :returns: The agent name (use the return value, not the *name*
         argument, they differ on rerun attempts).
     """
@@ -780,6 +783,8 @@ def register_inline_agent(
         "prompt": prompt,
         "executor": executor,
     }
+    if builtin_tools:
+        config["tools"] = {"builtins": builtin_tools}
     with io.BytesIO() as buf:
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             yaml_bytes = yaml.dump(config).encode()
