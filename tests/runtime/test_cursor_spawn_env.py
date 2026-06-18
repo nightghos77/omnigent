@@ -102,6 +102,15 @@ def test_ambient_cursor_api_key_used_when_no_spec_auth(monkeypatch: pytest.Monke
     assert env["HARNESS_CURSOR_API_KEY"] == "crsr_ambient"
 
 
+def test_ambient_cursor_api_key_stripped_before_forwarding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A padded ambient ``CURSOR_API_KEY`` is cleaned before reaching the SDK."""
+    monkeypatch.setenv("CURSOR_API_KEY", "\ncrsr_ambient\n")
+    env = _build_cursor_spawn_env(_make_spec(auth=None))
+    assert env["HARNESS_CURSOR_API_KEY"] == "crsr_ambient"
+
+
 def test_spec_api_key_wins_over_ambient(monkeypatch: pytest.MonkeyPatch) -> None:
     """An explicit spec api-key auth takes precedence over an ambient key."""
     monkeypatch.setenv("CURSOR_API_KEY", "crsr_ambient")
@@ -150,6 +159,16 @@ def test_stored_cursor_key_used_when_spec_has_no_auth(
     """A CURSOR_API_KEY registered via ``omnigent setup`` flows when the spec
     declares no auth — so a user need not export it in every shell."""
     monkeypatch.setenv("CURSOR_KEY_SRC", "crsr_stored_123")
+    _write_cursor_config(tmp_path, "env:CURSOR_KEY_SRC")
+    env = _build_cursor_spawn_env(_make_spec(auth=None))
+    assert env["HARNESS_CURSOR_API_KEY"] == "crsr_stored_123"
+
+
+def test_stored_env_cursor_key_stripped_before_forwarding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A padded ``env:`` cursor key resolves cleanly before SDK forwarding."""
+    monkeypatch.setenv("CURSOR_KEY_SRC", "\ncrsr_stored_123\n")
     _write_cursor_config(tmp_path, "env:CURSOR_KEY_SRC")
     env = _build_cursor_spawn_env(_make_spec(auth=None))
     assert env["HARNESS_CURSOR_API_KEY"] == "crsr_stored_123"
