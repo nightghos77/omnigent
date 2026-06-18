@@ -263,7 +263,9 @@ def _patch_family_helpers(
 
     :param monkeypatch: Pytest monkeypatch fixture.
     :param same_family: Value ``_same_provider_family`` returns.
-    :param native: Value ``_agent_is_native`` returns.
+    :param native: Value ``_agent_is_native`` /
+        ``_agent_carries_native_fork_history`` return (these switch tests
+        target claude/codex native, which both classify and carry history).
     :param labels: Value ``_presentation_labels_for_agent`` returns.
     :param raise_on_load: Whether the bundle precheck should fail.
     """
@@ -272,6 +274,7 @@ def _patch_family_helpers(
     )
     monkeypatch.setattr(sessions_mod, "_same_provider_family", lambda a, b: same_family)
     monkeypatch.setattr(sessions_mod, "_agent_is_native", lambda a: native)
+    monkeypatch.setattr(sessions_mod, "_agent_carries_native_fork_history", lambda a: native)
     monkeypatch.setattr(sessions_mod, "_presentation_labels_for_agent", lambda a: labels)
 
 

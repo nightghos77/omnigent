@@ -890,3 +890,37 @@ async def test_fork_no_switch_native_source_carries_history(
         "A same-agent fork must not recompute presentation labels (None); "
         "the copied source labels are already correct."
     )
+
+
+@pytest.mark.parametrize("harness", ["cursor-native", "pi-native"])
+@pytest.mark.asyncio
+async def test_fork_cursor_native_does_not_carry_history(
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    """A fork of a cursor/pi native source must NOT mark native carry.
+
+    Unlike claude/codex native, the cursor and pi harnesses record no
+    resumable native session and their TUIs can't import a transcript, so
+    ``carry_history_into_native`` must be False — stamping it would be a
+    false promise the runner can't keep (the fork launches fresh anyway).
+    """
+    conv = _make_conversation()
+    conv_store = _ConversationStore(
+        conversations={"conv_src": conv},
+        items_by_conv={"conv_src": [_make_item("msg_1", "Hi")]},
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions.get_agent_cache",
+        lambda: _StubAgentCache({"ag_test": harness}),
+    )
+    client = TestClient(_build_app(conv_store))
+
+    resp = client.post("/v1/sessions/conv_src/fork", json={})
+
+    assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+    fork_call = conv_store.fork_calls[0]
+    assert fork_call["carry_history_into_native"] is False, (
+        f"A {harness} fork must not mark native carry — that harness can't "
+        "replay fork history, so the directive would be a false promise."
+    )
