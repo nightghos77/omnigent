@@ -559,6 +559,44 @@ async def test_custom_tool_execute_success_dict_is_not_flagged() -> None:
     assert json.loads(result) == {"ok": True, "value": 42}
 
 
+async def test_custom_tool_execute_flags_cancelled_dict_with_iserror() -> None:
+    """A cancelled result ({"cancelled": True}) is non-SUCCESS per
+    ``classify_tool_result`` and must surface as an error — the old top-level
+    error/blocked check let it through as an apparently-successful result."""
+
+    async def cancelled(name: str, args: dict[str, Any]) -> Any:
+        return {"cancelled": True, "reason": "user aborted"}
+
+    result = await asyncio.to_thread(_bridged_execute(cancelled), {}, None)
+    assert isinstance(result, dict) and result["isError"] is True
+    assert "user aborted" in result["content"][0]["text"]
+
+
+async def test_custom_tool_execute_flags_nested_error_with_iserror() -> None:
+    """An error nested inside a ``content`` envelope (not a top-level ``error``
+    key) is classified non-SUCCESS and must surface as an error — parity with
+    ``classify_tool_result``, which the top-level-only check diverged from."""
+
+    async def nested(name: str, args: dict[str, Any]) -> Any:
+        return {"content": [{"error": "inner failure"}]}
+
+    result = await asyncio.to_thread(_bridged_execute(nested), {}, None)
+    assert isinstance(result, dict) and result["isError"] is True
+    assert "inner failure" in result["content"][0]["text"]
+
+
+async def test_custom_tool_execute_flags_nested_blocked_with_iserror() -> None:
+    """A policy block nested under ``result`` is surfaced as an error, matching
+    ``classify_tool_result``'s recursion into envelope keys."""
+
+    async def nested(name: str, args: dict[str, Any]) -> Any:
+        return {"result": {"blocked": True, "reason": "nested policy"}}
+
+    result = await asyncio.to_thread(_bridged_execute(nested), {}, None)
+    assert isinstance(result, dict) and result["isError"] is True
+    assert "nested policy" in result["content"][0]["text"]
+
+
 async def test_custom_tool_execute_times_out_to_iserror(monkeypatch: pytest.MonkeyPatch) -> None:
     """A tool that never completes must not block the daemon thread forever — the
     bounded wait surfaces a timeout tool error instead of hanging."""

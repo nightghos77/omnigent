@@ -333,16 +333,20 @@ def _tool_error_payload(text: str) -> dict[str, Any]:  # type: ignore[explicit-a
 def _encode_tool_result(result: Any) -> Any:  # type: ignore[explicit-any]
     """Encode a bridged-tool result for the SDK custom-tool return.
 
-    A dict carrying a truthy ``error`` or ``blocked`` is a dispatch failure or a
-    policy block (the shapes ``_bridge_one_dispatch`` / the policy layer return):
-    surface it as an ``isError`` payload so the model sees a failure — parity with
-    the claude-sdk handler, which the cursor harness otherwise diverged from by
-    delivering errors as ordinary, apparently-successful results. Everything else
+    A result that :func:`classify_tool_result` flags as anything other than
+    SUCCESS — a dispatch failure (``error``), a policy block (``blocked``), a
+    cancellation (``cancelled``), or any of those nested inside a
+    ``content`` / ``result`` / ``output`` / ``text`` envelope — is surfaced as
+    an ``isError`` payload so the model sees a failure. This is parity with the
+    claude-sdk handler, which the cursor harness otherwise diverged from by
+    delivering errors as ordinary, apparently-successful results (and by only
+    inspecting the top-level ``error`` / ``blocked`` keys). Everything else
     returns its text: a ``str`` passthrough (the SDK wraps it as success), else
     JSON.
     """
-    if isinstance(result, dict) and (result.get("error") or result.get("blocked")):
-        return _tool_error_payload(json.dumps(result, default=str))
+    if classify_tool_result(result).status != ToolCallStatus.SUCCESS:
+        encoded = result if isinstance(result, str) else json.dumps(result, default=str)
+        return _tool_error_payload(encoded)
     if isinstance(result, str):
         return result
     try:
