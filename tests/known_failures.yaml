@@ -190,12 +190,6 @@ skips:
   # timeout lets the rest of the shard complete). Same bulk-first,
   # triage-later approach as PRs #475/#482/#554/#606.
 
-  - id: tests/e2e/omnigent/test_run_omnigent_rate_limit_approval.py::test_run_omnigent_rate_limit_approval_round_trip
-    reason: "Shard 3 bulk: pexpect timeout waiting for 'approval required'; hung the whole pytest process under single-worker thread-timeout."
-    issue: 532
-    cluster: repl-pexpect-cli
-    mode: skip
-
   - id: tests/e2e/omnigent/test_run_omnigent_coding_supervisor.py::test_run_omnigent_coding_supervisor_oneshot
     reason: "Shard 3 bulk: coding supervisor one-shot. Triage under #532."
     issue: 532
@@ -321,18 +315,6 @@ skips:
     cluster: repl-pexpect-cli
     mode: skip
 
-  - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_full_session_lifecycle
-    reason: "Nightly bulk: REPL session-lifecycle / pexpect cluster."
-    issue: 532
-    cluster: repl-pexpect-cli
-    mode: skip
-
-  - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_local_mode_launches_runner_subprocess
-    reason: "Nightly bulk: REPL session-lifecycle / pexpect cluster."
-    issue: 532
-    cluster: repl-pexpect-cli
-    mode: skip
-
   - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_recover_after_runner_death
     reason: "Nightly bulk: REPL session-lifecycle / pexpect cluster."
     issue: 532
@@ -341,12 +323,6 @@ skips:
 
   - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_resume_reuses_daemon_runner
     reason: "Nightly bulk: REPL session-lifecycle / pexpect cluster."
-    issue: 532
-    cluster: repl-pexpect-cli
-    mode: skip
-
-  - id: tests/e2e/omnigent/test_run_omnigent_coding_supervisor.py::test_run_omnigent_coding_supervisor_interactive_enters_repl
-    reason: "Nightly bulk: run_omnigent CLI cluster."
     issue: 532
     cluster: repl-pexpect-cli
     mode: skip
@@ -543,11 +519,6 @@ skips:
     issue: 0
     cluster: steering-cancel-compaction-state
     mode: skip
-  - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_reasoning_effort_threads_through
-    reason: "Force-merge backlog (standalone). First observed failing at 305e9bb9 (2026-05-23T06:06:59Z, E2E)."
-    issue: 0
-    cluster: repl-pexpect-cli
-    mode: skip
   - id: tests/e2e/test_filesystem_changed_files_e2e.py::test_filesystem_changes_appear_after_agent_write
     reason: "Force-merge backlog (standalone). First observed failing at 305e9bb9 (2026-05-23T06:06:59Z, E2E)."
     issue: 0
@@ -620,4 +591,10 @@ skips:
     reason: "openai-agents empty-output/crash resurfaced on the gateway (#2707)."
     issue: 2707
     cluster: openai-agents-empty-output
+    mode: skip
+
+  - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_local_mode_launches_runner_subprocess
+    reason: "CI-only failure: 'No runner subprocess found under <pid>' — the test asserts the runner is a direct child in the process tree, which holds locally (macOS) but not in CI's Linux container/daemon process model. Passes 0/30 in CI flake-stress while its 4 session-lifecycle siblings pass. Needs a CI-robust runner-detection fix (likely tied to the daemon-reuse lifecycle work)."
+    issue: 532
+    cluster: repl-pexpect-cli
     mode: skip
