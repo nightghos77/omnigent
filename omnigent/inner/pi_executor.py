@@ -144,8 +144,13 @@ def _safe_dumps(response: dict[str, Any], req_id: str | None) -> str:  # type: i
     try:
         return json.dumps(response, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
+        # Stringify ``req_id`` so the fallback envelope itself can never raise
+        # on a non-serializable id (the caller passes a ``str`` today, but the
+        # guard must hold for any future caller). ``None`` stays ``None`` so the
+        # client still sees a null id rather than the literal "None".
+        safe_id: str | None = req_id if req_id is None or isinstance(req_id, str) else str(req_id)
         return json.dumps(
-            {"id": req_id, "error": f"unserializable tool result: {exc}"},
+            {"id": safe_id, "error": f"unserializable tool result: {exc}"},
             separators=(",", ":"),
         )
 

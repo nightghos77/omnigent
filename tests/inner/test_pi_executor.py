@@ -31,6 +31,7 @@ from omnigent.inner.pi_executor import (
     _generate_extension_js,
     _pi_provider_for_model,
     _PiRpcSession,
+    _safe_dumps,
     _sanitize_schema,
     _ToolServer,
 )
@@ -736,6 +737,21 @@ class TestToolServer(unittest.TestCase):
             await server.stop()
 
         _run(_test())
+
+    def test_safe_dumps_with_non_serializable_req_id_does_not_raise(self):
+        """``_safe_dumps`` never raises, even on a non-serializable ``req_id``.
+
+        The fallback envelope serializes ``req_id`` too, so a future caller
+        passing an id ``json.dumps`` can't encode (here a ``datetime``) must
+        still yield a valid frame rather than re-raising the very crash the
+        guard exists to prevent. The id is stringified in that envelope.
+        """
+        bad_id = datetime(2026, 6, 18, 12, 0, 0)
+        out = _safe_dumps({"id": bad_id, "result": {"k": "v"}}, bad_id)  # type: ignore[arg-type]
+        payload = json.loads(out)
+        self.assertEqual(payload["id"], str(bad_id))
+        self.assertIn("unserializable tool result", payload["error"])
+        self.assertNotIn("result", payload)
 
     def test_generated_bridge_returns_error_for_unserializable_tool_result(self):
         """End-to-end: Node bridge + Python server return an error result.
