@@ -439,6 +439,15 @@ class AntigravityExecutor(Executor):
         it cannot race the still-running producer task and turn a clean cancel
         into an :class:`ExecutorError`.
 
+        This deliberately departs from the peer executors, which call
+        ``close_session()`` eagerly on interrupt (see
+        :meth:`CursorExecutor.interrupt_session` and
+        :meth:`ClaudeSDKExecutor.interrupt_session`). Antigravity cannot do the
+        same: an eager close would race the still-live turn's producer task and
+        convert a clean :class:`TurnCancelled` into an :class:`ExecutorError`,
+        so we only invalidate the signature here and defer the rebuild (and
+        close) to the next turn.
+
         :param session_key: The Omnigent session id to interrupt.
         :returns: ``True`` if a live conversation was asked to cancel,
             ``False`` when the session has no open conversation.
