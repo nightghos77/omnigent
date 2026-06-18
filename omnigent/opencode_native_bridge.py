@@ -219,8 +219,10 @@ def ensure_auth_secret(bridge_dir: Path) -> str:
         if existing:
             return existing
     except FileNotFoundError:
+        # No secret on disk yet: fall through to mint a fresh one below.
         pass
     except OSError:
+        # Secret exists but is unreadable: ignore and regenerate it below.
         pass
     bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     secret = secrets.token_urlsafe(32)

@@ -1714,6 +1714,25 @@ Generator should also print checklist items from Appendix A.
 
 ---
 
+## Deferred to a follow-up PR: codex-native migration onto NativeServerHarness
+
+This PR introduces the unified harness interface — `HarnessDescriptor`, the `NativeServerHarness` base, and the pluggable `NativeServerTransport` abstraction — and **proves it against a real, new case**: the OpenCode harness (`OpenCodeNativeExecutor`) is built entirely on `NativeServerHarness`. The abstraction is therefore exercised in production, not speculative.
+
+What is **explicitly out of scope here** and deferred to an immediate follow-up PR:
+
+- **`codex-native` is not yet migrated onto `NativeServerHarness`.** It continues to subclass `Executor` directly and is unchanged by this PR.
+- **`CodexWsTransport` is defined but not active.** It is included as part of the transport-interface work but is **not wired into any production path** and has no live coverage yet. Do not treat its presence as a completed codex-native migration.
+
+Why the retrofit is deferred (each reason independently confirmed against the current code and its pinned tests during cross-review):
+
+1. **Attachment materialization.** codex-native writes oversized inputs to disk (the `input_too_large` production fix, guarded by 3 dedicated tests). The shared `NativePrompt`/transport contract cannot represent this without a substantial rewrite of battle-tested code.
+2. **Concurrent-steering lock semantics differ.** codex-native polls server boot *outside* the inject lock; `NativeServerHarness` polls *inside* it (pinned by test). Reconciling these is behavior-sensitive.
+3. **Duplication isn't actually collapsed by a partial move.** The ~5,300-line codex forwarder lives outside the base regardless; migrating only the ~230-line injector would not remove the duplication that motivated the unification.
+
+**Follow-up:** retrofit `codex-native` onto `NativeServerHarness` + `CodexWsTransport` in a dedicated PR, cross-reviewed the same way, preserving codex-native's attachment and steering behavior exactly.
+
+---
+
 ## Sequencing and PR Breakdown
 
 ### Recommendation: OpenCode First, Then Unify

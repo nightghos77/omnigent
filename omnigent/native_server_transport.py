@@ -135,42 +135,42 @@ class NativeServerTransport(Protocol):
 
     async def start_server(self, launch: NativeLaunchConfig) -> NativeServerHandle:
         """Start (or attach to) the native server; return its handle."""
-        ...
+        raise NotImplementedError
 
     async def stop_server(self) -> None:
         """Stop the native server process this transport started."""
-        ...
+        raise NotImplementedError
 
     async def create_or_resume_session(self, launch: NativeLaunchConfig) -> str:
         """Resume ``launch.external_session_id`` or create a new session id."""
-        ...
+        raise NotImplementedError
 
     async def send_prompt(self, session_id: str, prompt: NativePrompt) -> Mapping[str, Any]:
         """Inject a prompt into the native session."""
-        ...
+        raise NotImplementedError
 
     async def abort(self, session_id: str) -> bool:
         """Abort the native session's active work."""
-        ...
+        raise NotImplementedError
 
     def events(self, session_id: str) -> AsyncIterator[NativeEvent]:
         """Stream native events for *session_id*."""
-        ...
+        raise NotImplementedError
 
     async def list_history(self, session_id: str) -> list[Mapping[str, Any]]:
         """Return the native session's message history."""
-        ...
+        raise NotImplementedError
 
     async def fork(self, session_id: str, *, at_message_id: str | None = None) -> str:
         """Fork the native session; return the new session id."""
-        ...
+        raise NotImplementedError
 
     async def reply_permission(self, decision: NativePermissionDecision) -> None:
         """Relay a permission decision to the native server."""
-        ...
+        raise NotImplementedError
 
     def build_tui_attach_command(
         self, launch: NativeLaunchConfig, session_id: str
     ) -> tuple[list[str], Mapping[str, str]]:
         """Build the ``(argv, env)`` for a terminal TUI takeover."""
-        ...
+        raise NotImplementedError

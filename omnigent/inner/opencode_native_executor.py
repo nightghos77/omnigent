@@ -44,11 +44,11 @@ class OpenCodeNativeExecutor(NativeServerHarness):
         super().__init__(
             descriptor=HARNESS_DESCRIPTORS["opencode-native"],
             transport=OpenCodeHttpTransport(bridge_dir=self._bridge_dir),
-            resolve_session_id=self._resolve_session_id,
-            build_prompt=self._build_prompt,
+            resolve_session_id=self._resolve_opencode_session_id,
+            build_prompt=self._build_prompt_with_model_override,
         )
 
-    def _build_prompt(self, content: Any) -> NativePrompt | None:
+    def _build_prompt_with_model_override(self, content: Any) -> NativePrompt | None:
         """
         Build a prompt, pinning the resolved model so it governs from turn one.
 
@@ -76,7 +76,7 @@ class OpenCodeNativeExecutor(NativeServerHarness):
             return prompt
         return dataclasses.replace(prompt, model=model)
 
-    async def _resolve_session_id(self) -> str | None:
+    async def _resolve_opencode_session_id(self) -> str | None:
         """
         Resolve the OpenCode session id from bridge state.
 
