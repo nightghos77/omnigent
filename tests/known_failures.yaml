@@ -113,14 +113,8 @@ skips:
     cluster: repl-pexpect-cli
     mode: skip
 
-  - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_persists_across_turns_e2e
-    reason: "Server returns 500 on this test. Likely runner availability or model deployment issue, not narrowed."
-    issue: 532
-    cluster: terminal-d6
-    mode: skip
-
   - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_send_keys_drives_interactive_e2e
-    reason: "Same 500 pattern as test_sys_terminal_persists_across_turns_e2e."
+    reason: "Drives the removed /v1/responses route; re-home to the sessions API in a later batch."
     issue: 532
     cluster: terminal-d6
     mode: skip
@@ -265,12 +259,6 @@ skips:
     reason: "Shard 1 bulk: sys async-inbox harness drain."
     issue: 532
     cluster: async-dispatch-inbox-sse
-    mode: skip
-
-  - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_cwd_default_is_workspace_e2e
-    reason: "Shard 1 bulk: sys-terminal cwd default; same family as sys_terminal_persists/send_keys in shard 2."
-    issue: 532
-    cluster: terminal-d6
     mode: skip
 
   - id: tests/e2e/test_tool_dispatch_workflow_client_side_e2e.py::test_harness_routes_client_side_tool_through_dispatch_workflow
@@ -454,23 +442,12 @@ skips:
     cluster: async-dispatch-inbox-sse
     mode: skip
 
-  - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_omnigent_yaml_threaded_through_e2e
-    reason: "Follow-up: sys-terminal omnigent-yaml threaded through. sys-terminal cluster."
-    issue: 532
-    cluster: terminal-d6
-    mode: skip
-
   - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_full_workflow_e2e
     reason: "Follow-up: sys-terminal full workflow. sys-terminal cluster."
     issue: 532
     cluster: terminal-d6
     mode: skip
 
-  - id: tests/e2e/test_sys_terminal_e2e.py::test_sys_terminal_repl_tool_call_render_no_mcp_prefix_no_duplicates_e2e
-    reason: "Follow-up: sys-terminal REPL tool-call render. sys-terminal cluster."
-    issue: 532
-    cluster: repl-pexpect-cli
-    mode: skip
   - id: tests/e2e/omnigent/test_repl_session_lifecycle.py::test_repl_effort_command_persists_session_metadata
     reason: "Nightly bulk: REPL session-lifecycle / pexpect cluster."
     issue: 532
