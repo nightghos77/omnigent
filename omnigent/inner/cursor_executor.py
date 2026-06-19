@@ -67,6 +67,7 @@ from .executor import (
     ToolCallRequest,
     ToolCallStatus,
     ToolSpec,
+    TurnCancelled,
     TurnComplete,
     classify_tool_result,
 )
@@ -333,16 +334,28 @@ def _tool_error_payload(text: str) -> dict[str, Any]:  # type: ignore[explicit-a
 def _encode_tool_result(result: Any) -> Any:  # type: ignore[explicit-any]
     """Encode a bridged-tool result for the SDK custom-tool return.
 
-    A dict carrying a truthy ``error`` or ``blocked`` is a dispatch failure or a
-    policy block (the shapes ``_bridge_one_dispatch`` / the policy layer return):
-    surface it as an ``isError`` payload so the model sees a failure — parity with
-    the claude-sdk handler, which the cursor harness otherwise diverged from by
-    delivering errors as ordinary, apparently-successful results. Everything else
-    returns its text: a ``str`` passthrough (the SDK wraps it as success), else
-    JSON.
+    A result that :func:`classify_tool_result` flags as anything other than
+    SUCCESS — a dispatch failure (``error``), a policy block (``blocked``), a
+    cancellation (``cancelled``), or any of those nested inside a
+    ``content`` / ``result`` / ``output`` / ``text`` envelope (or under a list
+    element) — is surfaced as an ``isError`` payload so the model sees a
+    failure. This pins the encoded result to the same ``classify_tool_result``
+    verdict the executor already reports for the observed ``ToolCallComplete``
+    event (see ``_sdk_message_to_events``), rather than the top-level-only
+    ``error`` / ``blocked`` check this used to share with the claude-sdk
+    handler. (The claude-sdk handler still uses that narrower top-level check,
+    so this is *not* parity with it.) Everything else returns its text: a
+    ``str`` passthrough (the SDK wraps it as success), else JSON.
+
+    Trade-off: because ``classify_tool_result`` maps ``{"cancelled": True}`` to
+    CANCELLED (not SUCCESS), a benign cancellation result — e.g. a successful
+    ``sys_cancel_async`` returning ``{"cancelled": True, ...}`` — is encoded as
+    ``isError``. This is intentional: a non-SUCCESS verdict is treated as a
+    failure here regardless of how benign the cancellation is.
     """
-    if isinstance(result, dict) and (result.get("error") or result.get("blocked")):
-        return _tool_error_payload(json.dumps(result, default=str))
+    if classify_tool_result(result).status != ToolCallStatus.SUCCESS:
+        encoded = result if isinstance(result, str) else json.dumps(result, default=str)
+        return _tool_error_payload(encoded)
     if isinstance(result, str):
         return result
     try:
@@ -470,6 +483,10 @@ class CursorExecutor(Executor):
         # pi / claude-sdk use). ``None`` on single-process / pre-turn paths
         # (then policy is a no-op).
         self._policy_evaluator: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None
+        # Installed by the runtime adapter; surfaces ASK verdicts to the
+        # user via the elicitation UI (approval prompt). ``None`` when no
+        # handler is wired (single-process / test paths → fail closed).
+        self._elicitation_handler: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
 
     def supports_streaming(self) -> bool:
         return True
@@ -506,6 +523,10 @@ class CursorExecutor(Executor):
         """Evaluate PHASE_TOOL_CALL policy for a Cursor native tool.
 
         Returns ``{"block": bool, "reason": str}``.
+
+        ASK is treated as DENY (fail-closed) because Cursor native tools
+        execute inside the Cursor process — by the time we observe them the
+        tool has already started, so we cannot pause for human approval.
         """
         evaluator = self._policy_evaluator
         if evaluator is None:
@@ -514,6 +535,34 @@ class CursorExecutor(Executor):
         action = getattr(verdict, "action", None)
         if action == "POLICY_ACTION_DENY":
             return {"block": True, "reason": getattr(verdict, "reason", "") or "blocked by policy"}
+        if action == "POLICY_ACTION_ASK":
+            reason = getattr(verdict, "reason", "") or "approval required by policy"
+            # Cursor native tools have already started by the time we see
+            # them, but we still surface the elicitation UI so the human
+            # can decide whether the *rest of the turn* should continue.
+            handler = self._elicitation_handler
+            if handler is not None:
+                logger.info(
+                    "TOOL_CALL policy ASK on native cursor tool %s; "
+                    "prompting user (tool already started): %s",
+                    name,
+                    reason,
+                )
+                approved = await handler(name, args)
+                if approved:
+                    return {"block": False, "reason": ""}
+                return {"block": True, "reason": reason}
+            # No handler → fail closed.
+            logger.warning(
+                "TOOL_CALL policy ASK on native cursor tool %s — no elicitation "
+                "handler; treating as DENY: %s",
+                name,
+                reason,
+            )
+            return {
+                "block": True,
+                "reason": f"approval required (auto-denied — no elicitation handler): {reason}",
+            }
         return {"block": False, "reason": ""}
 
     # -- custom-tool bridge -------------------------------------------------
@@ -788,11 +837,32 @@ class CursorExecutor(Executor):
             yield ExecutorError(message=f"cursor-sdk turn failed: {exc}", retryable=True)
             return
 
+        # RunResult.status is Literal["finished", "error", "cancelled",
+        # "expired"]. Only "finished" should commit a TurnComplete; the other
+        # terminal statuses are surfaced as errors/cancellation and tear the
+        # session down (the agent/bridge may be in an inconsistent state).
         status = getattr(result, "status", "")
         if status == "error":
             await self.close_session(session_key)
             detail = getattr(result, "result", "") or "cursor-sdk run reported an error"
             yield ExecutorError(message=f"cursor-sdk run error: {detail}", retryable=True)
+            return
+        if status == "expired":
+            await self.close_session(session_key)
+            detail = getattr(result, "result", "") or "cursor-sdk run expired"
+            yield ExecutorError(message=f"cursor-sdk run expired: {detail}", retryable=True)
+            return
+        if status == "cancelled":
+            await self.close_session(session_key)
+            yield TurnCancelled(reason="cursor-sdk run cancelled")
+            return
+        if status != "finished":
+            await self.close_session(session_key)
+            detail = getattr(result, "result", "") or "cursor-sdk run finished with unknown status"
+            yield ExecutorError(
+                message=f"cursor-sdk run returned non-finished status {status!r}: {detail}",
+                retryable=True,
+            )
             return
 
         # Prefer the streamed text we accumulated (which carries the paragraph
