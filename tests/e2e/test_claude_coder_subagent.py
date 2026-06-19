@@ -48,7 +48,6 @@ def _extract_all_text(body: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-
 def test_claude_coder_spawns_reviewer(
     http_client: httpx.Client,
     live_runner_id: str,
@@ -76,8 +75,7 @@ def test_claude_coder_spawns_reviewer(
         model=parent_model,
         profile="",
         prompt=(
-            "You are a coding assistant. You have a sub-agent "
-            "called 'reviewer' that reviews code."
+            "You are a coding assistant. You have a sub-agent called 'reviewer' that reviews code."
         ),
         mock_llm_base_url=mock_llm_server_url,
         extra_config={

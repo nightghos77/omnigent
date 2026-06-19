@@ -73,8 +73,7 @@ def test_single_message_subagent_auto_collect(
         model=parent_model,
         profile="",
         prompt=(
-            "You are a coding assistant. You have a sub-agent "
-            "called 'reviewer' for code reviews."
+            "You are a coding assistant. You have a sub-agent called 'reviewer' for code reviews."
         ),
         mock_llm_base_url=mock_llm_server_url,
         extra_config={
@@ -158,6 +157,4 @@ def test_single_message_subagent_auto_collect(
     assert body["status"] == "completed", f"Task failed: {body.get('error')}"
 
     text = _extract_all_text(body)
-    assert len(text) > 20, (
-        f"Expected substantial response with sub-agent results, got: {text!r}"
-    )
+    assert len(text) > 20, f"Expected substantial response with sub-agent results, got: {text!r}"

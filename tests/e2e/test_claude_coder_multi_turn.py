@@ -84,10 +84,7 @@ def test_claude_coder_remembers_tool_calls(
         harness="claude-sdk",
         model=model,
         profile="",
-        prompt=(
-            "You are a coding assistant. You can run shell "
-            "commands using the Bash tool."
-        ),
+        prompt=("You are a coding assistant. You can run shell commands using the Bash tool."),
         mock_llm_base_url=mock_llm_server_url,
     )
 
@@ -109,10 +106,7 @@ def test_claude_coder_remembers_tool_calls(
             },
             # Turn 1, message 2: report the result
             {
-                "text": (
-                    "The mlflow/mlflow repository has approximately "
-                    "19,500 GitHub stars."
-                ),
+                "text": ("The mlflow/mlflow repository has approximately 19,500 GitHub stars."),
             },
             # Turn 2: respond about tools used
             {
