@@ -122,14 +122,47 @@ def _mock_env(mock_llm_server_url: str) -> dict[str, str]:
     (config_home / "config.yaml").write_text("", encoding="utf-8")
     env["OMNIGENT_CONFIG_HOME"] = str(config_home)
     # Strip credentials that would shadow or conflict with mock access.
-    for stale in (
+    # Covers Databricks, Anthropic/Claude, OpenAI, AWS, GCP, Azure, GitHub,
+    # and any other credential vars that should not leak into mock subprocesses.
+    _CREDENTIAL_VARS = (
+        # Databricks
         "DATABRICKS_TOKEN",
+        "DATABRICKS_HOST",
+        "DATABRICKS_CLIENT_ID",
+        "DATABRICKS_CLIENT_SECRET",
         "DATABRICKS_CONFIG_PROFILE",
+        "DATABRICKS_ACCOUNT_ID",
+        # Anthropic / Claude SDK
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
         "CLAUDE_CODE",
         "CLAUDECODE",
+        # OpenAI / Codex (will be overridden below, but strip first)
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
         "CODEX",
-    ):
+        # AWS
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_DEFAULT_REGION",
+        # GCP / Google
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_CLOUD_PROJECT",
+        "GCP_PROJECT",
+        "GCLOUD_PROJECT",
+        # Azure
+        "AZURE_CLIENT_ID",
+        "AZURE_CLIENT_SECRET",
+        "AZURE_TENANT_ID",
+        "AZURE_SUBSCRIPTION_ID",
+        # GitHub
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+    )
+    for stale in _CREDENTIAL_VARS:
         env.pop(stale, None)
     # Point the openai-agents harness at the mock server.
     env["OPENAI_BASE_URL"] = f"{mock_llm_server_url}/v1"

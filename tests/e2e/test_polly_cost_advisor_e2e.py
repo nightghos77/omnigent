@@ -8,9 +8,19 @@ required. Proves the advisor's end-to-end contract against the mock substrate:
     persist a v3 verdict label sized to the turn's difficulty (cheap vs
     expensive), while the brain model is UNCHANGED (shadow — ``applied=False``).
     Both turns are driven by a mock judge that returns appropriate tier JSON.
-(b) OPTIMIZE (session toggle on): the turn's verdict is persisted with
-    ``applied=True`` (the runner applied the verdict model to the brain),
-    and a conversational follow-up persists NO new label.
+(b) OPTIMIZE (session toggle on): the verdict is persisted with
+    ``applied=False`` because the mock spec must use ``openai-agents`` (the
+    only harness compatible with the mock LLM server), and the cost advisor's
+    model-application scope pin is ``claude-sdk``-only (see
+    ``_APPLICABLE_HARNESS`` in cost_advisor.py).  The advisor records the
+    verdict but does not override the harness model at this layer.
+
+    **Accepted coverage gap:** the production ``applied=True`` path (where the
+    runner replaces the brain model on a live ``claude-sdk`` turn) is covered
+    by runner-path unit tests in ``tests/runner/test_cost_advisor.py`` and
+    ``tests/runner/test_app_sessions_native.py``.  Adding a full e2e test for
+    ``applied=True`` would require mocking the Anthropic Messages API — deferred
+    until the mock server gains Anthropic SSE support for the claude-sdk harness.
 (c) RUN --MODEL FLAG: ``omnigent run --model X`` is the SPEC default, not a
     session pin — the optimize advisor still applies its verdict over it.
 
