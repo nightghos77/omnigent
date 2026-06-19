@@ -18,7 +18,7 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -507,6 +507,8 @@ def test_repl_local_mode_launches_runner_subprocess(
         clean_exit(child, timeout=_EXIT_TIMEOUT)
     finally:
         child.close(force=True)
+
+
 @contextlib.contextmanager
 def _registered_runner(
     base_url: str,
@@ -829,6 +831,7 @@ async def test_repl_reasoning_effort_threads_through(
             capture_logs=True,
             log_dir=tmp_path / "logs",
             prewarm_spec_path=yaml_path,
+            extra_env={k: env[k] for k in ("OPENAI_BASE_URL", "OPENAI_API_KEY") if k in env},
         )
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:

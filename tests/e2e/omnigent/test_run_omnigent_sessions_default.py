@@ -17,7 +17,7 @@ import pexpect
 import pytest
 
 from tests.e2e.conftest import configure_mock_llm, reset_mock_llm
-from tests.e2e.omnigent._pexpect_harness import ensure_repl_test_theme_env
+from tests.e2e.omnigent._pexpect_harness import ensure_repl_test_theme_env, submit_prompt
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MODEL = "mock-sessions-default-model"
@@ -81,6 +81,9 @@ def test_repl_default_sessions_renders_assistant_text(
     yaml_path = tmp_path / "hello_world_marker.yaml"
     yaml_path.write_text(
         f"name: hello_world_marker\n"
+        f"executor:\n"
+        f"  harness: openai-agents\n"
+        f"  model: {_MODEL}\n"
         f"prompt: |\n"
         f"  You MUST reply with exactly the literal string\n"
         f"  {_MARKER}\n"
@@ -90,7 +93,7 @@ def test_repl_default_sessions_renders_assistant_text(
     child = _spawn_repl(yaml_path=yaml_path, env=mock_credentials_env)
     try:
         child.expect("\u276f", timeout=60)
-        child.sendline("Say the marker.")
+        submit_prompt(child, "Say the marker.")
         try:
             child.expect(_MARKER, timeout=_REPL_TIMEOUT_S)
         except pexpect.TIMEOUT:
