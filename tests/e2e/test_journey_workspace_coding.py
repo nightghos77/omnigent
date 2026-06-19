@@ -9,6 +9,15 @@ commands (``ls``, ``printf``, ``cat``) in its terminal.
 
 Skipped if tmux is not installed on the host.
 
+**Mock-LLM note (B1):** The mock LLM drives all tool-call decisions
+(which tool to invoke and with what arguments). However, tmux I/O
+itself is always the real, unpatched system path — the content
+assertions (``combined_reads_step2.strip()``, ``"hello world"`` in
+combined reads) verify that shell commands actually executed inside a
+real tmux session and their output was captured correctly. A regression
+in the tmux or terminal-tool layer would surface as empty or missing
+content even though the mock LLM sequence completes.
+
 Usage::
 
     pytest tests/e2e/test_journey_workspace_coding.py -v
@@ -49,6 +58,11 @@ def _get_function_call_outputs(
     conversation. Assertions land on deterministic tool output strings,
     not on flaky LLM prose summaries.
 
+    ``GET /v1/sessions/{id}/items`` returns items serialised by
+    ``ConversationItem.to_api_dict()``, which spreads all data-model
+    fields (``name``, ``call_id``, ``output``, …) directly onto the
+    top-level dict — they are NOT nested under a ``"data"`` key.
+
     :param client: HTTP client.
     :param conversation_id: Conversation to inspect.
     :param tool_name: Only outputs of calls to this tool are returned.
@@ -59,20 +73,18 @@ def _get_function_call_outputs(
     items = resp.json()["data"]
     calls_by_id: dict[str, dict] = {}
     for item in items:
-        itype = item.get("type")
-        data = item.get("data") or {}
-        name = item.get("name") or data.get("name")
-        call_id = item.get("call_id") or data.get("call_id")
-        if itype == "function_call" and name == tool_name and call_id:
-            calls_by_id[call_id] = item
+        if (
+            item.get("type") == "function_call"
+            and item.get("name") == tool_name
+            and item.get("call_id")
+        ):
+            calls_by_id[item["call_id"]] = item
     outputs: list[str] = []
     for item in items:
-        itype = item.get("type")
-        data = item.get("data") or {}
-        call_id = item.get("call_id") or data.get("call_id")
-        output = item.get("output") or data.get("output")
-        if itype == "function_call_output" and call_id in calls_by_id:
-            outputs.append(str(output or ""))
+        if item.get("type") == "function_call_output":
+            cid = item.get("call_id")
+            if cid in calls_by_id:
+                outputs.append(str(item.get("output") or ""))
     return outputs
 
 
