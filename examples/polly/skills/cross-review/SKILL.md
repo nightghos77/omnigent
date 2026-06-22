@@ -21,15 +21,8 @@ anyone needs to read through.
    `review-auth-refactor`, never the raw vendor name:
    `sys_session_send(agent="claude_code"|"codex"|"pi", title="review-<task_slug>",
    args={purpose: "review", input: "<the diff> + <the acceptance contract>.
-   Review ONLY against the contract. Focus your review on:
-   1. BLOCKING — correctness bugs, security vulnerabilities (injection, auth bypass,
-      data exposure, etc.), broken contracts, missing error handling on failure paths,
-      and UX regressions that make a feature unusable or misleading.
-   2. NON-BLOCKING — design concerns, edge cases worth noting.
-   3. SUGGESTIONS — minor improvements.
-   Do NOT flag code style, formatting, naming conventions, or other cosmetic issues —
-   those are not worth review bandwidth. Report blocking / non-blocking / suggestions.
-   Do not edit code."})`. Give it the diff as text — do NOT point
+   Review ONLY against the contract. Report blocking / non-blocking /
+   suggestions. Do not edit code."})`. Give it the diff as text — do NOT point
    it at the implementer's worktree. Fetch the diff and emit the
    `sys_session_send` call in the SAME turn you decide to review — never end a
    turn having only announced "I'll load cross-review and fetch the diff" with
@@ -61,9 +54,6 @@ anyone needs to read through.
   human at the plan gate.
 - Give the reviewer ONLY the diff + contract — never the implementer's
   transcript or worktree. The cross-vendor independence is the whole point.
-- The reviewer's mandate is critical issues only: security vulnerabilities, correctness
-  bugs, contract violations, and UX regressions. Code style, formatting, and naming
-  are explicitly out of scope — do not include them in the report.
 - Review is a coding sub-agent (`claude_code`/`codex`/`pi`) dispatched with
   `purpose: "review"` — a DIFFERENT vendor from the one that built the diff. It
   reports issues and never edits; only the implementer opens a PR, so a stray
