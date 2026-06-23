@@ -68,14 +68,13 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
-          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: bash .github/scripts/ci/integration-matrix.sh
 
   integration:
     name: Integration (${{ matrix.name }})
-    # Draft PRs and fork pull_request events resolve to an EMPTY matrix in
-    # `setup` (forks run via the fork-e2e/** mirror push instead), so this job
-    # produces zero leg runs for them -- and thus no skipped placeholder check.
+    # Draft PRs resolve to an EMPTY matrix in `setup`, so this job produces zero
+    # leg runs (and thus no skipped placeholder check). Fork PRs DO run (mock
+    # LLM, no secrets) -- same as ci.yml.
     needs: setup
     runs-on: ubuntu-latest
     # Per-leg ceiling; inner test step caps at 25 min, rest covers install +

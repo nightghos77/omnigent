@@ -6,9 +6,8 @@
 # job-level `if:` skip would instead leave one check-run with an unexpanded
 # `Integration (${{ matrix.name }})` name.
 #
-# Skips draft PRs, and fork PRs only when REQUIRES_SECRETS=true. Integration is
-# mock-LLM (no secrets), so it leaves the flag unset and runs forks directly,
-# like CI -- no fork-e2e/** mirror needed.
+# Skips only draft PRs. Integration is mock-LLM (no secrets), so fork PRs run
+# directly, like CI -- no fork-e2e/** mirror needed.
 #
 # Single openai-agents leg: all tests now run against the mock LLM server.
 # claude-sdk and codex reject "mock-model" as an unknown model (they validate
@@ -16,8 +15,7 @@
 # only openai-agents works without real credentials. The model name is unused
 # in mock mode (model_name fixture returns "mock-model" regardless).
 #
-# Env in:  EVENT_NAME (github.event_name), IS_DRAFT, IS_FORK (both may be empty
-#          on non-PR events), REQUIRES_SECRETS (optional, default false).
+# Env in:  EVENT_NAME (github.event_name), IS_DRAFT.
 # Out:     matrix={"include":[{"name":..,"harness":..,"model":..,"workers":..}, ...]}
 #          (or {"include":[]} when skipped).
 
@@ -27,14 +25,10 @@ skip=false
 if [[ "${IS_DRAFT:-false}" == "true" ]]; then
   skip=true
 fi
-if [[ "$EVENT_NAME" == "pull_request" && "${IS_FORK:-false}" == "true" \
-      && "${REQUIRES_SECRETS:-false}" == "true" ]]; then
-  skip=true
-fi
 
 if [[ "$skip" == "true" ]]; then
   echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
-  echo "skip: empty matrix (event=$EVENT_NAME draft=${IS_DRAFT:-} fork=${IS_FORK:-})"
+  echo "skip: empty matrix (event=$EVENT_NAME draft=${IS_DRAFT:-})"
   exit 0
 fi
 

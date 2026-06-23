@@ -79,7 +79,6 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
-          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
           NUM_SHARDS: "4"
         run: bash .github/scripts/ci/e2e-shard-matrix.sh
 
