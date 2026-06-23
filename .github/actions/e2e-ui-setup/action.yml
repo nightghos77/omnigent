@@ -3,10 +3,8 @@ description: >
   Shared pre-test setup for the e2e-ui jobs: Python + Node + uv, the venv and
   Playwright caches, project install, bubblewrap/tmux, Chromium, and the ap-web
   SPA build. Used by BOTH the mock-LLM `e2e-ui` job and the gateway
-  `e2e-ui-native` job in e2e-ui.yml so the two never drift (the same reason
-  e2e.yml shares its steps via the e2e-run composite). The caller owns the
-  preceding `actions/checkout` (the ref differs per job is not the case here,
-  but keeping checkout in the job mirrors the other workflows).
+  `e2e-ui-native` job so the two never drift (the same reason e2e.yml shares its
+  steps via the e2e-run composite). The caller owns the preceding checkout.
 
 runs:
   using: composite

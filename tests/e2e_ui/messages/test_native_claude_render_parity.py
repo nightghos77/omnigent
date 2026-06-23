@@ -61,7 +61,6 @@ from .test_message_render_parity import (
 
 _log = logging.getLogger(__name__)
 
-# Drives a real Claude Code CLI against the live gateway -- gateway-only.
 pytestmark = pytest.mark.native_gateway
 
 _TERMINAL_VIEW = '[data-testid="terminal-view"]'

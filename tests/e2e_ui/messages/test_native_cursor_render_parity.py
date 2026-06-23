@@ -112,8 +112,8 @@ def _cursor_unavailable_reason() -> str | None:
     return None
 
 
-# native_gateway: drives a real Cursor CLI against the live gateway. The skipif
-# additionally drops it when the Cursor CLI / CURSOR_API_KEY is unavailable.
+# native_gateway: needs the gateway. skipif: also drop it when the Cursor CLI /
+# CURSOR_API_KEY is unavailable.
 pytestmark = [
     pytest.mark.native_gateway,
     pytest.mark.skipif(

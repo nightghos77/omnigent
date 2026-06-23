@@ -44,11 +44,8 @@ jobs:
   gate:
     uses: ./.github/workflows/security-gate.yml
 
-  # Compute the harness matrix once. A skipped run (draft PR) yields an EMPTY
-  # matrix -> zero jobs -> no skipped check-runs with an unexpanded
-  # `Integration (${{ matrix.name }})` name. Fork PRs run by default (mock LLM,
-  # no secrets). Mirrors the e2e.yml / e2e-ui.yml setup-job pattern via
-  # .github/scripts/ci/integration-matrix.sh.
+  # Harness matrix (integration-matrix.sh). Fork PRs run by default; draft PRs
+  # resolve to an empty matrix.
   setup:
     name: setup
     needs: gate
@@ -72,7 +69,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           IS_DRAFT: ${{ github.event.pull_request.draft }}
           IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
-          # Mock-LLM only -- no REQUIRES_SECRETS, so fork PRs run directly (like CI).
         run: bash .github/scripts/ci/integration-matrix.sh
 
   integration:

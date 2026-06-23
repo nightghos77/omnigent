@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 # Emits the integration-test harness matrix as `matrix=<json>` on $GITHUB_OUTPUT.
 #
-# Returns an EMPTY matrix ({"include":[]}) when the run should be skipped:
-#   - draft PRs, or
-#   - a fork's pull_request WHEN the caller sets REQUIRES_SECRETS=true.
-#     Integration runs entirely against the mock LLM (no secrets), so it never
-#     sets REQUIRES_SECRETS and runs fork PRs directly on `pull_request`, like
-#     CI/e2e -- no fork-e2e/** mirror needed. (The flag exists for parity with
-#     e2e-shard-matrix.sh, where the secret-bearing e2e-ui native leg uses it.)
-# An empty matrix yields zero jobs and therefore NO check-runs. This is the
-# whole reason for the indirection (mirrors e2e-shard-matrix.sh): a job-level
-# `if:` skip of a matrixed job would instead leave one check-run with an
-# unexpanded `Integration (${{ matrix.name }})` name.
+# Returns an EMPTY matrix ({"include":[]}) to skip: zero jobs, NO check-runs.
+# This is the whole reason for the indirection (mirrors e2e-shard-matrix.sh): a
+# job-level `if:` skip would instead leave one check-run with an unexpanded
+# `Integration (${{ matrix.name }})` name.
+#
+# Skips draft PRs, and fork PRs only when REQUIRES_SECRETS=true. Integration is
+# mock-LLM (no secrets), so it leaves the flag unset and runs forks directly,
+# like CI -- no fork-e2e/** mirror needed.
 #
 # Single openai-agents leg: all tests now run against the mock LLM server.
 # claude-sdk and codex reject "mock-model" as an unknown model (they validate
