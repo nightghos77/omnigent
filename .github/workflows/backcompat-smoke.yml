@@ -10,7 +10,7 @@ name: Backcompat Smoke
 # the scheduled sweep (.github/actions/{e2e,integration}-run,
 # .github/scripts/ci/backcompat-pairwise-matrix.sh), so there's no drift.
 #
-# Lighter than the scheduled sweep: previous release only, 2 e2e shards/cell.
+# Lighter than the scheduled sweep: previous release only, 4 e2e shards/cell.
 # Runs on every PR so a change that breaks the last release's server or runner
 # is caught pre-merge.
 
@@ -57,7 +57,9 @@ jobs:
           # {main, <prev>} crossed pairwise -> 3 cells (main/main excluded):
           # old-server+main-runner, main-server+old-runner, old-server+old-runner.
           VERSIONS: ${{ steps.prev.outputs.prev != '' && format('main,{0}', steps.prev.outputs.prev) || 'main' }}
-          NUM_SHARDS: "2"
+          # 4 shards (matches the e2e gate). 2 shards put ~2x the gate's per-job
+          # load on each runner and crashed the xdist workers under contention.
+          NUM_SHARDS: "4"
         run: bash .github/scripts/ci/backcompat-pairwise-matrix.sh
 
   smoke-e2e:
