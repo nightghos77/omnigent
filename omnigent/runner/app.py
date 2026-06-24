@@ -1691,6 +1691,7 @@ async def _auto_create_goose_terminal(
     _runner_auth = _RunnerDatabricksAuth(_make_auth_token_factory())
 
     from omnigent.goose_native_forwarder import supervise_goose_forwarder
+    from omnigent.goose_native_permissions import supervise_goose_approval_mirror
 
     if server_client is not None and ensure_comment_relay is not None:
         await ensure_comment_relay(
@@ -1699,21 +1700,41 @@ async def _auto_create_goose_terminal(
             await_notify=False,
         )
 
+    async def _supervise_goose_native_bridges() -> None:
+        """Run the transcript forwarder and the approval mirror together.
+
+        Both are per-session, runner-owned, restart-on-failure; gathering them
+        under one task keeps a single registration/cancellation handle for
+        teardown. The forwarder mirrors Goose's transcript onto the conversation;
+        the approval mirror surfaces Goose's cliclack tool-confirmation prompt as
+        a web elicitation (see :mod:`omnigent.goose_native_permissions`).
+        """
+        await asyncio.gather(
+            supervise_goose_forwarder(
+                base_url=server_url,
+                headers={},
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                agent_name="goose-native-ui",
+                goose_session_name=goose_session_name,
+                auth=_runner_auth,
+            ),
+            supervise_goose_approval_mirror(
+                base_url=server_url,
+                headers={},
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                auth=_runner_auth,
+            ),
+        )
+
     _forwarder_task = asyncio.create_task(
-        supervise_goose_forwarder(
-            base_url=server_url,
-            headers={},
-            session_id=session_id,
-            bridge_dir=bridge_dir,
-            agent_name="goose-native-ui",
-            goose_session_name=goose_session_name,
-            auth=_runner_auth,
-        ),
-        name=f"goose-forwarder-{session_id}",
+        _supervise_goose_native_bridges(),
+        name=f"goose-bridges-{session_id}",
     )
     _register_auto_forwarder_task(session_id, _forwarder_task)
     _logger.info(
-        "Auto-created goose terminal + forwarder for session %s; forwarder_task=%s",
+        "Auto-created goose terminal + forwarder/approval-mirror for session %s; task=%s",
         session_id,
         _forwarder_task.get_name(),
     )
@@ -1822,6 +1843,7 @@ async def _auto_create_hermes_terminal(
     _runner_auth = _RunnerDatabricksAuth(_make_auth_token_factory())
 
     from omnigent.hermes_native_forwarder import supervise_hermes_forwarder
+    from omnigent.hermes_native_permissions import supervise_hermes_approval_mirror
 
     if server_client is not None and ensure_comment_relay is not None:
         await ensure_comment_relay(
@@ -1830,24 +1852,44 @@ async def _auto_create_hermes_terminal(
             await_notify=False,
         )
 
+    async def _supervise_hermes_native_bridges() -> None:
+        """Run the transcript forwarder and the approval mirror together.
+
+        Both are per-session, runner-owned, restart-on-failure; gathering them
+        under one task keeps a single registration/cancellation handle for
+        teardown. The forwarder mirrors the TUI transcript onto the conversation;
+        the approval mirror surfaces Hermes' dangerous-command prompt as a web
+        elicitation (see :mod:`omnigent.hermes_native_permissions`).
+        """
+        await asyncio.gather(
+            supervise_hermes_forwarder(
+                base_url=server_url,
+                headers={},
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                agent_name="hermes-native-ui",
+                workspace=workspace,
+                launch_epoch_s=launch_epoch_s,
+                # The native TUI uses the user's ~/.hermes, so the forwarder tails
+                # the default store there (default_state_db()).
+                auth=_runner_auth,
+            ),
+            supervise_hermes_approval_mirror(
+                base_url=server_url,
+                headers={},
+                session_id=session_id,
+                bridge_dir=bridge_dir,
+                auth=_runner_auth,
+            ),
+        )
+
     _forwarder_task = asyncio.create_task(
-        supervise_hermes_forwarder(
-            base_url=server_url,
-            headers={},
-            session_id=session_id,
-            bridge_dir=bridge_dir,
-            agent_name="hermes-native-ui",
-            workspace=workspace,
-            launch_epoch_s=launch_epoch_s,
-            # The native TUI uses the user's ~/.hermes, so the forwarder tails the
-            # default store there (default_state_db()).
-            auth=_runner_auth,
-        ),
-        name=f"hermes-forwarder-{session_id}",
+        _supervise_hermes_native_bridges(),
+        name=f"hermes-bridges-{session_id}",
     )
     _register_auto_forwarder_task(session_id, _forwarder_task)
     _logger.info(
-        "Auto-created hermes terminal + forwarder for session %s; forwarder_task=%s",
+        "Auto-created hermes terminal + forwarder/approval-mirror for session %s; task=%s",
         session_id,
         _forwarder_task.get_name(),
     )
