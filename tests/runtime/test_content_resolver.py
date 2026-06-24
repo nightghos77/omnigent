@@ -1007,3 +1007,67 @@ def test_attachment_text_type_for_extension_rejects_binary(filename: str | None)
     from omnigent.runtime.content_resolver import attachment_text_type_for_extension
 
     assert attachment_text_type_for_extension(filename) is None
+
+
+def test_text_code_extensions_resolve_to_allowed_text() -> None:
+    """Every declared text/code extension resolves to a text-like type that
+    has an upload limit — so the route's extension fallback admits it (no 415),
+    regardless of the browser-reported MIME."""
+    from omnigent.runtime.content_resolver import (
+        _TEXT_CODE_EXTENSIONS,
+        attachment_text_type_for_extension,
+        attachment_upload_limit,
+    )
+
+    for ext in _TEXT_CODE_EXTENSIONS:
+        mime = attachment_text_type_for_extension(f"file{ext}")
+        assert mime is not None, f"{ext} resolved to no text type"
+        assert attachment_upload_limit(mime) is not None, f"{ext} -> {mime} has no limit"
+
+
+def test_client_server_attachment_extension_parity() -> None:
+    """The web client's TEXT_CODE_EXTENSIONS must all be accepted server-side,
+    even when the browser reports a non-text MIME — the parity contract the two
+    share. Guards against the client gate admitting a file the upload route then
+    415s (the divergence Polly flagged)."""
+    import re
+    from pathlib import Path
+
+    from omnigent.runtime.content_resolver import (
+        _resolve_content_type,
+        attachment_text_type_for_extension,
+        attachment_upload_limit,
+    )
+
+    ts_path = Path(__file__).resolve().parents[2] / "ap-web" / "src" / "lib" / "attachments.ts"
+    if not ts_path.exists():
+        pytest.skip("ap-web/src/lib/attachments.ts not present (server-only checkout)")
+    block = ts_path.read_text().split("TEXT_CODE_EXTENSIONS = new Set([")[1].split("]")[0]
+    client_exts = re.findall(r'"(\.[a-z0-9]+)"', block)
+    assert client_exts, "could not parse client TEXT_CODE_EXTENSIONS"
+
+    # MIMEs a browser/OS might attach to these extensions, including wrong ones.
+    worst_case_mimes = [
+        "",
+        "application/octet-stream",
+        "video/mp2t",  # .ts
+        "application/xml",  # .xml
+        "application/x-ruby",  # .rb
+    ]
+
+    def server_accepts(name: str, browser_mime: str) -> bool:
+        content_type = _resolve_content_type(browser_mime, name)
+        limit = attachment_upload_limit(content_type)
+        if limit is None:
+            ext_type = attachment_text_type_for_extension(name)
+            if ext_type is not None:
+                limit = attachment_upload_limit(ext_type)
+        return limit is not None
+
+    rejected = [
+        (ext, mime)
+        for ext in client_exts
+        for mime in worst_case_mimes
+        if not server_accepts(f"file{ext}", mime)
+    ]
+    assert not rejected, f"client accepts but server would 415: {rejected}"

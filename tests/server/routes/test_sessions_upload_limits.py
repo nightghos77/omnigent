@@ -120,3 +120,36 @@ def test_upload_text_just_under_limit_succeeds(upload_client: tuple[TestClient, 
         files={"file": ("big.txt", payload, "text/plain")},
     )
     assert resp.status_code in (200, 201), resp.status_code
+
+
+class _FakeUpload:
+    """Minimal UploadFile stand-in exposing the chunked ``read`` interface."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._pos = 0
+
+    async def read(self, size: int) -> bytes:
+        chunk = self._data[self._pos : self._pos + size]
+        self._pos += len(chunk)
+        return chunk
+
+
+async def test_read_upload_capped_allows_exactly_at_limit() -> None:
+    """A payload exactly at the limit is accepted (the ``>`` boundary)."""
+    from omnigent.server.routes.sessions import _read_upload_capped
+
+    data = b"x" * 100
+    assert await _read_upload_capped(_FakeUpload(data), 100) == data
+
+
+async def test_read_upload_capped_rejects_one_over_limit() -> None:
+    """One byte over the limit raises HTTP 413."""
+    import pytest as _pytest
+    from fastapi import HTTPException
+
+    from omnigent.server.routes.sessions import _read_upload_capped
+
+    with _pytest.raises(HTTPException) as exc_info:
+        await _read_upload_capped(_FakeUpload(b"x" * 101), 100)
+    assert exc_info.value.status_code == 413
