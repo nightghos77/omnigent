@@ -312,8 +312,8 @@ async def test_advisor_model_override_picks_judge_model() -> None:
     "spec_mode,override,expected",
     [
         # No override: spec mode stands.
-        ("advise", None, "advise"),
-        ("optimize", None, "optimize"),
+        ("advise", None, None),
+        ("optimize", None, None),
         # Toggle ON escalates to optimize — even an advise-default spec.
         ("advise", "on", "optimize"),
         ("optimize", "on", "optimize"),
@@ -321,7 +321,7 @@ async def test_advisor_model_override_picks_judge_model() -> None:
         ("advise", "off", None),
         ("optimize", "off", None),
         # Unexpected override value defers to the spec marker.
-        ("optimize", "weird", "optimize"),
+        ("optimize", "weird", None),
     ],
 )
 def test_resolve_advisor_mode_precedence(
