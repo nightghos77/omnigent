@@ -45,12 +45,11 @@ _HERMES_OS_TOOLS = frozenset(
     {"terminal", "execute_code", "read_file", "write_file", "search_files"}
 )
 
-# Goose native tool names surfaced via the ``PreToolUse`` hook (see
-# ``omnigent.inner.goose_native_hook``). Goose namespaces its built-in
-# "developer" extension tools as ``developer__<tool>``; ``shell`` is the
-# terminal tool and ``write`` / ``edit`` / ``text_editor`` / ``read_image`` /
-# ``tree`` are the file tools (names vary slightly by Goose version, so cover
-# both the split write/edit and the unified text_editor spellings).
+# Goose native tool names. Goose namespaces its built-in "developer" extension
+# tools as ``developer__<tool>``; ``shell`` is the terminal tool and
+# ``write`` / ``edit`` / ``text_editor`` / ``read_image`` / ``tree`` are the file
+# tools (names vary slightly by Goose version, so cover both the split write/edit
+# and the unified text_editor spellings).
 _GOOSE_NATIVE_OS_TOOLS = frozenset(
     {
         "developer__shell",

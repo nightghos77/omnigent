@@ -8,16 +8,11 @@ analog of the goose-native tmux bridge. This is what wires the web-UI chat box t
 the running Hermes TUI (and, since the web UI embeds that pane, the message shows
 in both surfaces).
 
-For Omnigent tool-policy enforcement (web approval cards), the runner gives the
-native TUI a per-session ``HERMES_HOME`` built by :func:`setup_hermes_native_home`:
-the user's full ``~/.hermes`` config is copied in (so model/provider/tools/skills
-carry over) and Omnigent's ``pre_tool_call`` shell hook is layered on top. The hook
-calls the server's policy ``evaluate`` endpoint, which parks on an ``ASK`` policy
-until the human responds to the web approval card — the same mechanism the headless
-``hermes`` harness uses (see :mod:`omnigent.inner.hermes_executor`). The terminal is
-launched with ``HERMES_YOLO_MODE=1`` so Hermes' *own* in-TUI approval prompt is
-suppressed and the web card is the sole gate (the hook fires before, and
-independent of, Hermes' approval check — verified against ``model_tools.py``).
+The native TUI uses the user's own ``~/.hermes`` (model/provider/tools) and its
+own tool-approval prompt; Omnigent writes no vendor config here. That prompt is
+surfaced to the web UI as a synced approval card by the runner-side mirror
+(:mod:`omnigent.hermes_native_permissions`), which reads the pane via
+:func:`capture_hermes_pane` and answers it via :func:`send_hermes_pane_keys`.
 """
 
 from __future__ import annotations
@@ -26,9 +21,7 @@ import contextlib
 import hashlib
 import json
 import os
-import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -87,118 +80,6 @@ def build_hermes_native_spawn_env(session_id: str) -> dict[str, str]:
     bridge_dir = bridge_dir_for_session_id(session_id)
     _ensure_dir(bridge_dir)
     return {BRIDGE_DIR_ENV_VAR: str(bridge_dir)}
-
-
-# Subpath under the bridge dir holding the per-session HERMES_HOME (config copy +
-# Omnigent policy hook). Lives under the bridge dir so it shares its lifecycle.
-_HERMES_HOME_SUBDIR = "hermes_home"
-# state.db sidecars are NOT copied from the user's ~/.hermes — the native TUI
-# writes a fresh transcript store in the per-session home (and the forwarder
-# tails that one), so old sessions/history never leak in.
-_STATE_DB_PREFIXES = ("state.db",)
-
-
-def hermes_native_home(bridge_dir: Path) -> Path:
-    """Return the per-session ``HERMES_HOME`` path under *bridge_dir*."""
-    return bridge_dir / _HERMES_HOME_SUBDIR
-
-
-def setup_hermes_native_home(
-    bridge_dir: Path,
-    *,
-    session_id: str,
-    server_url: str,
-    hook_script_path: str | None = None,
-) -> Path:
-    """Build a per-session ``HERMES_HOME`` that routes tool calls through Omnigent.
-
-    Copies the user's full ``~/.hermes`` (minus the ``state.db`` transcript store)
-    into ``<bridge_dir>/hermes_home`` so the native TUI keeps the user's
-    model/provider/tools/skills, then layers Omnigent's ``pre_tool_call`` shell
-    hook on top (reusing :mod:`omnigent.inner.hermes_policy_hook`). The hook calls
-    the server's policy ``evaluate`` endpoint, which parks on ``ASK`` until the
-    human responds to the web approval card. Rebuilt fresh each launch so a
-    changed user config or stale state is never reused.
-
-    Pair this with ``HERMES_YOLO_MODE=1`` on the terminal env so Hermes' own
-    in-TUI approval prompt is suppressed and the web card is the sole gate.
-
-    :param bridge_dir: The hermes-native bridge dir (the home lives under it).
-    :param session_id: Conversation id for policy evaluation.
-    :param server_url: Omnigent server base URL the hook posts to.
-    :param hook_script_path: Override for the policy-hook script (tests); defaults
-        to the bundled :mod:`omnigent.inner.hermes_policy_hook`.
-    :returns: The per-session ``HERMES_HOME`` path.
-    """
-    home = hermes_native_home(bridge_dir)
-    shutil.rmtree(home, ignore_errors=True)
-    home.mkdir(parents=True, exist_ok=True)
-
-    # Copy the user's full config tree (minus the transcript store) so the TUI
-    # keeps everything they configured via ``hermes setup`` / ``hermes model``.
-    user_home = Path.home() / ".hermes"
-    if user_home.is_dir():
-        for entry in user_home.iterdir():
-            if entry.name.startswith(_STATE_DB_PREFIXES):
-                continue
-            dst = home / entry.name
-            try:
-                if entry.is_dir():
-                    shutil.copytree(entry, dst, dirs_exist_ok=True, symlinks=True)
-                else:
-                    shutil.copy2(entry, dst)
-            except OSError:
-                # Best-effort: a single unreadable file shouldn't abort the launch.
-                continue
-
-    hook_script = hook_script_path or str(
-        Path(__file__).parent / "inner" / "hermes_policy_hook.py"
-    )
-    # Wrapper script: export server/session env, then exec the Python hook.
-    wrapper = home / "omnigent-policy-hook.sh"
-    wrapper.write_text(
-        f"#!/bin/sh\n"
-        f"export _OMNIGENT_SERVER_URL='{server_url}'\n"
-        f"export _OMNIGENT_SESSION_ID='{session_id}'\n"
-        f"exec '{sys.executable}' '{hook_script}'\n"
-    )
-    wrapper.chmod(0o755)
-
-    # Layer the pre_tool_call hook onto the (full) copied config. Loading the
-    # copied config.yaml preserves the user's settings; JSON is valid YAML so we
-    # re-emit as JSON to avoid a yaml dependency on the write path.
-    config: dict[str, Any] = {}
-    config_path = home / "config.yaml"
-    if config_path.is_file():
-        try:
-            import yaml
-
-            loaded = yaml.safe_load(config_path.read_text()) or {}
-            if isinstance(loaded, dict):
-                config = loaded
-        except Exception:  # noqa: BLE001 — malformed user config: start clean
-            config = {}
-    config["hooks_auto_accept"] = True
-    config["hooks"] = {
-        **config.get("hooks", {}),
-        "pre_tool_call": [
-            {
-                "command": str(wrapper),
-                # Must outlast the server's ASK timeout so the hook stays alive
-                # while the human responds to the web approval card.
-                "timeout": 86400,
-            },
-        ],
-    }
-    config_path.write_text(json.dumps(config, indent=2) + "\n")
-
-    # Pre-approve the hook command so Hermes never prompts for shell-hook consent.
-    allowlist_path = home / "shell-hooks-allowlist.json"
-    allowlist_path.write_text(
-        json.dumps({"approvals": [{"event": "pre_tool_call", "command": str(wrapper)}]}, indent=2)
-        + "\n"
-    )
-    return home
 
 
 def write_tmux_target(
