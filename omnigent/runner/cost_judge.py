@@ -599,7 +599,7 @@ def build_llm_judge(  # type: ignore[explicit-any]  # executor_config is a YAML-
     return LLMJudge(config, effective_client)
 
 
-def resolve_advisor_mode(spec_mode: str, override: str | None) -> str | None:
+def resolve_advisor_mode(spec_mode: str, override: str | None) -> str | None:  # noqa: ARG001
     """
     Resolve the effective advisor mode for a turn.
 
