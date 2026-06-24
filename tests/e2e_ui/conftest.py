@@ -831,6 +831,11 @@ def live_server(
         # these the openai SDK falls back to real OpenAI, which fails.
         "OPENAI_BASE_URL": f"{mock_url}/v1",
         "OPENAI_API_KEY": "mock-key",
+        # Route the native Claude Code CLI to the mock (Anthropic Messages API).
+        # Claude Code reads ANTHROPIC_BASE_URL from its environment; the
+        # Anthropic SDK appends /v1/messages automatically.
+        "ANTHROPIC_BASE_URL": mock_url,
+        "ANTHROPIC_API_KEY": "mock-key",
     }
     runner_proc = subprocess.Popen(
         [sys.executable, "-m", "omnigent.runner._entry"],
@@ -1093,7 +1098,14 @@ def _ensure_runner_online(
         # Mirror the live_server runner's mock-LLM routing so the
         # respawned runner's harness also hits the mock.
         **(
-            {"OPENAI_BASE_URL": f"{mock_url}/v1", "OPENAI_API_KEY": "mock-key"} if mock_url else {}
+            {
+                "OPENAI_BASE_URL": f"{mock_url}/v1",
+                "OPENAI_API_KEY": "mock-key",
+                "ANTHROPIC_BASE_URL": mock_url,
+                "ANTHROPIC_API_KEY": "mock-key",
+            }
+            if mock_url
+            else {}
         ),
     }
     proc = subprocess.Popen(
