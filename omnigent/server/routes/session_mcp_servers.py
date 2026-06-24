@@ -5,12 +5,15 @@ from __future__ import annotations
 import asyncio
 import gzip
 import io
+import logging
 import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import quote
 
+import httpx
 import yaml
 from fastapi import APIRouter, Request, Response, status
 
@@ -32,6 +35,11 @@ from omnigent.stores import AgentStore, ConversationStore
 from omnigent.stores.artifact_store import ArtifactStore
 from omnigent.stores.permission_store import PermissionStore
 
+if TYPE_CHECKING:
+    from omnigent.runner.routing import RunnerRouter
+
+_logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True)
 class _McpLocation:
@@ -47,6 +55,7 @@ def create_session_mcp_servers_router(
     agent_store: AgentStore,
     artifact_store: ArtifactStore | None,
     agent_cache: AgentCache | None,
+    runner_router: RunnerRouter | None = None,
     auth_provider: AuthProvider | None = None,
     permission_store: PermissionStore | None = None,
 ) -> APIRouter:
@@ -112,6 +121,7 @@ def create_session_mcp_servers_router(
             mode="create",
             target_name=None,
         )
+        await _reset_runner_session_agent_cache(session_id, agent.id, runner_router)
         _publish_agent_changed(session_id, agent)
         return _summary_from_spec(spec, body.name)
 
@@ -131,6 +141,7 @@ def create_session_mcp_servers_router(
             mode="update",
             target_name=server_name,
         )
+        await _reset_runner_session_agent_cache(session_id, agent.id, runner_router)
         _publish_agent_changed(session_id, agent)
         return _summary_from_spec(spec, body.name)
 
@@ -152,6 +163,7 @@ def create_session_mcp_servers_router(
             mode="delete",
             target_name=server_name,
         )
+        await _reset_runner_session_agent_cache(session_id, agent.id, runner_router)
         _publish_agent_changed(session_id, agent)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -247,6 +259,37 @@ def create_session_mcp_servers_router(
         return new_spec
 
     return router
+
+
+async def _reset_runner_session_agent_cache(
+    session_id: str,
+    agent_id: str,
+    runner_router: RunnerRouter | None,
+) -> None:
+    """Ask the bound runner to forget cached spec/tool data for this session."""
+    if runner_router is None:
+        return
+    try:
+        routed = runner_router.client_for_session_resources(session_id)
+    except (LookupError, httpx.HTTPError, OmnigentError):
+        # The session may not be runner-bound yet. Persisting the bundle is
+        # still correct; the next runner bind resolves the updated spec.
+        return
+
+    try:
+        resp = await routed.client.post(
+            f"/v1/sessions/{quote(session_id, safe='')}/agent-cache/reset",
+            json={"agent_id": agent_id},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+    except (ConnectionError, RuntimeError, httpx.HTTPError):
+        _logger.warning(
+            "runner agent-cache reset failed after MCP edit for session=%s agent=%s",
+            session_id,
+            agent_id,
+            exc_info=True,
+        )
 
 
 def _publish_agent_changed(session_id: str, agent: Agent) -> None:

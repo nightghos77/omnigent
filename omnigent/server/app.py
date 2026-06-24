@@ -1555,6 +1555,7 @@ def create_app(
             agent_store,
             artifact_store,
             agent_cache,
+            runner_router=runner_router,
             auth_provider=auth_provider,
             permission_store=permission_store,
         ),

@@ -10,6 +10,7 @@ import httpx
 import pytest
 import yaml
 
+from omnigent.server.routes import session_mcp_servers as mcp_routes
 from tests.server.helpers import create_test_session
 
 pytestmark = pytest.mark.asyncio
@@ -52,6 +53,58 @@ async def test_create_mcp_server_updates_agent_bundle(client: httpx.AsyncClient)
         "description": "GitHub tools",
         "url": "https://example.com/sse",
     }
+
+
+async def test_mcp_server_mutations_reset_bound_runner_agent_cache(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP server mutations invalidate stale runner-side agent caches."""
+    calls: list[tuple[str, str, object]] = []
+
+    async def _fake_reset(
+        session_id: str,
+        agent_id: str,
+        runner_router: object,
+    ) -> None:
+        calls.append((session_id, agent_id, runner_router))
+
+    monkeypatch.setattr(mcp_routes, "_reset_runner_session_agent_cache", _fake_reset)
+    session = await create_test_session(client, name="mcp-reset-agent")
+    session_id = session["id"]
+
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/agent/mcp-servers",
+        json={
+            "name": "echo",
+            "transport": "stdio",
+            "command": "python",
+            "args": ["echo_server.py"],
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+
+    update = await client.put(
+        f"/v1/sessions/{session_id}/agent/mcp-servers/echo",
+        json={
+            "name": "echo-renamed",
+            "transport": "stdio",
+            "command": "python",
+            "args": ["echo_server.py"],
+        },
+    )
+    assert update.status_code == 200, update.text
+
+    delete = await client.delete(f"/v1/sessions/{session_id}/agent/mcp-servers/echo-renamed")
+    assert delete.status_code == 204, delete.text
+
+    assert [(sid, aid) for sid, aid, _ in calls] == [
+        (session_id, session["agent_id"]),
+        (session_id, session["agent_id"]),
+        (session_id, session["agent_id"]),
+    ]
+    assert all(runner_router is not None for _, _, runner_router in calls)
 
 
 async def test_update_mcp_server_can_rename_and_change_transport(

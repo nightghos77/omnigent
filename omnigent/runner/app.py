@@ -13752,6 +13752,16 @@ def create_runner_app(
             content=session_resource_view_to_dict(resource),
         )
 
+    def _clear_session_agent_caches(session_id: str, agent_id: str | None = None) -> None:
+        """Drop cached spec/tool data derived from a session's agent bundle."""
+        _session_spec_cache.pop(session_id, None)
+        _session_skills_cache.pop(session_id, None)
+        _session_tool_schemas.pop(session_id, None)
+        _compaction_contexts.pop(session_id, None)
+        _session_snapshot_cache.pop(session_id, None)
+        if agent_id:
+            _spec_cache.pop(agent_id, None)
+
     # ── Phase 4: session resource cleanup endpoint ────────────────
 
     @app.delete("/v1/sessions/{session_id}/resources")
@@ -13833,16 +13843,44 @@ def create_runner_app(
         # whose attach fails with "terminal resource not found".
         await _teardown_session_terminals(session_id)
         await resource_registry.cleanup_session(session_id)
-        _session_spec_cache.pop(session_id, None)
-        _session_skills_cache.pop(session_id, None)
-        _session_tool_schemas.pop(session_id, None)
-        _compaction_contexts.pop(session_id, None)
-        _session_snapshot_cache.pop(session_id, None)
+        _clear_session_agent_caches(session_id, _session_agent_ids.get(session_id))
         return JSONResponse(
             status_code=200,
             content={
                 "session_id": session_id,
                 "object": "session.state_reset",
+                "reset": True,
+            },
+        )
+
+    @app.post("/v1/sessions/{session_id}/agent-cache/reset")
+    async def reset_session_agent_cache(session_id: str, request: Request) -> JSONResponse:
+        """Drop cached runner-side agent data after a session agent bundle edit.
+
+        Unlike ``reset-state``, this does not close terminals or filesystem
+        resources. MCP server edits only need the next tool/schema lookup to
+        re-resolve the updated agent bundle.
+        """
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        agent_id = body.get("agent_id") if isinstance(body, dict) else None
+        if not isinstance(agent_id, str) or not agent_id:
+            agent_id = _session_agent_ids.get(session_id)
+        if not agent_id:
+            with contextlib.suppress(OmnigentError, httpx.HTTPError, RuntimeError):
+                snapshot = await _session_snapshot(session_id)
+                if snapshot.ok and snapshot.agent_id:
+                    agent_id = snapshot.agent_id
+
+        _clear_session_agent_caches(session_id, agent_id)
+        return JSONResponse(
+            status_code=200,
+            content={
+                "session_id": session_id,
+                "agent_id": agent_id,
+                "object": "session.agent_cache_reset",
                 "reset": True,
             },
         )
@@ -13973,10 +14011,8 @@ def create_runner_app(
                 )
 
             if "__" in tool_name:
-                # MCP tool: strip the namespace prefix and dispatch via RunnerMcpManager.
-                # ``mcp_manager.call_tool`` expects the bare tool name that the MCP
-                # server registered; the runner manager resolves the owning server by
-                # scanning per-server tool lists internally.
+                # MCP tool: pass the full namespaced name so the runner
+                # validates the server prefix before stripping it internally.
                 if mcp_manager is None:
                     return JSONResponse(
                         status_code=503,
@@ -14007,7 +14043,6 @@ def create_runner_app(
                             }
                         },
                     )
-                _server_prefix, _, bare_tool = tool_name.partition("__")
                 try:
                     from omnigent.tools.mcp import McpElicitationRequired
 
@@ -14015,10 +14050,15 @@ def create_runner_app(
                         # MRTR retry: the Omnigent server already showed the
                         # elicitation and gathered the user's response.
                         # Forward to the MCP server with inputResponses.
-                        owning = mcp_manager._resolve_owning_server(spec, bare_tool)
-                        if owning is None or owning.connection is None:
+                        route = mcp_manager._resolve_tool_route(spec, tool_name)
+                        if route is None:
                             raise RuntimeError(
-                                f"runner has no live MCP serving tool {bare_tool!r}"
+                                f"runner has no live MCP serving tool {tool_name!r}"
+                            )
+                        owning, bare_tool = route
+                        if owning.connection is None:
+                            raise RuntimeError(
+                                f"runner has no live MCP serving tool {tool_name!r}"
                             )
                         output = await owning.connection.call_tool_with_elicitation(
                             bare_tool,
@@ -14029,7 +14069,7 @@ def create_runner_app(
                     else:
                         output = await mcp_manager.call_tool(
                             spec,
-                            bare_tool,
+                            tool_name,
                             arguments,
                             session_id=session_id,
                         )
