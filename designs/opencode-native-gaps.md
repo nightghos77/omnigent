@@ -1,6 +1,29 @@
 # OpenCode-native: feature-gap closure plan
 
-**Status:** draft for review · **Owner:** Dhruv Gupta · **Harness:** `opencode-native`
+**Status:** implemented (single PR) · **Owner:** Dhruv Gupta · **Harness:** `opencode-native`
+
+## Implementation status (this PR)
+
+All gaps from the review are closed in one PR:
+
+- ✅ **Compaction (P0)** — real `/compact` (v1 `/summarize`) + auto-compaction surfacing
+- ✅ **MCP** — `spec.mcp_servers` → opencode.json + `permission:ask` (policies route through the engine)
+- ✅ **Cost tracking (P1)** — `external_session_usage` from per-message cost/tokens
+- ✅ **Resume** — text-prefix replay from the Omnigent transcript (no more silent cross-host amnesia)
+- ✅ **Fork (P1)** — text-preamble fork (reuses resume rehydration)
+- ✅ **In-harness session-cmd sync** — TUI model-switch mirror + (compact/fork/resume above)
+- ✅ **Elicitation** — tool-approval round-trip verified + tested (the review's "double-check")
+- ✅ **Policies** — confirmed wired to the TOOL_CALL engine; `permission:ask` closes the MCP coverage hole
+
+Each was live-verified against `opencode serve` 1.17.7 where the wire was uncertain.
+
+**Deferred (bonus, not in the original gap list):** opencode's separate
+`question.v2` interactive input-request surface (free-form multi-choice
+questions, distinct from tool-approval). Surfacing it to the web requires a
+live `question.v2` fixture + the server form-elicitation hook (mirroring
+`codex_native_elicitation`), and must coexist with the TUI (first-answer-wins,
+like the permission card) — a naive intercept would break TUI interactivity.
+Tracked as a follow-up; the tool-approval elicitation path is unaffected.
 
 ## Background
 
