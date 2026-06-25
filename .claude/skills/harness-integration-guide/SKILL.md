@@ -44,8 +44,18 @@ the vendor's tool-calling interface.
 
 ### MCP connectivity
 
-- **In-proc SDK MCP server** — the harness runs an MCP server in-process and the SDK connects to it directly (e.g. claude-sdk).
-- **Non-MCP bridges** — many harnesses use vendor-specific tool bridging: `dynamicTools` RPC (codex), SDK `custom_tools` (cursor), SDK `FunctionTool` (openai-agents), TCP socket (pi), shell hooks (hermes), SDK in-proc tools (antigravity), SDK tool handlers (copilot).
+The harness must bridge Omnigent's builtin MCP tools so the model can call
+them. These tools provide session management, agent orchestration, policy
+control, and web access:
+
+- `sys_session_get_info`, `sys_session_list`, `sys_session_get_history`
+- `sys_agent_get`, `sys_agent_list`, `sys_agent_download`
+- `sys_call_async`, `sys_cancel_async`, `sys_cancel_task`
+- `sys_read_inbox`
+- `sys_add_policy`, `sys_policy_registry`
+- `load_skill`
+- `list_comments`, `update_comment`
+- `web_fetch`, `web_search`
 
 ### Omnigent policies
 
