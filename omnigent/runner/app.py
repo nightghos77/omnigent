@@ -2018,6 +2018,7 @@ async def _auto_create_hermes_terminal(
     server_url = _required_runner_env("RUNNER_SERVER_URL")
     _runner_auth = _RunnerDatabricksAuth(_make_auth_token_factory())
 
+    from omnigent.hermes_native_bridge import read_hermes_home
     from omnigent.hermes_native_forwarder import supervise_hermes_forwarder
     from omnigent.hermes_native_permissions import supervise_hermes_approval_mirror
 
@@ -2037,6 +2038,11 @@ async def _auto_create_hermes_terminal(
         the approval mirror surfaces Hermes' dangerous-command prompt as a web
         elicitation (see :mod:`omnigent.hermes_native_permissions`).
         """
+        # When a per-session HERMES_HOME is configured (policy hooks / MCP),
+        # Hermes writes its state.db there, not ~/.hermes.  Point the
+        # forwarder at the right database so it can discover the session.
+        _hermes_home = read_hermes_home(bridge_dir)
+        _state_db = _hermes_home / "state.db" if _hermes_home is not None else None
         await asyncio.gather(
             supervise_hermes_forwarder(
                 base_url=server_url,
@@ -2046,8 +2052,7 @@ async def _auto_create_hermes_terminal(
                 agent_name="hermes-native-ui",
                 workspace=workspace,
                 launch_epoch_s=launch_epoch_s,
-                # The native TUI uses the user's ~/.hermes, so the forwarder tails
-                # the default store there (default_state_db()).
+                db_path=_state_db,
                 auth=_runner_auth,
             ),
             supervise_hermes_approval_mirror(
