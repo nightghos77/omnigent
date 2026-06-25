@@ -27,6 +27,7 @@ from omnigent.inner.codex_executor import (
     _clean_codex_env,
     _codex_cli_version,
     _codex_home_config_source_from_env,
+    _create_subprocess_exec,
     _databricks_codex_auth_command,
     _databricks_codex_base_url,
     _databricks_codex_config_overrides,
@@ -77,6 +78,81 @@ _TRUSTED_HOOK_STATUSES = frozenset({"trusted", "managed"})
 # — we detect the old version up front and skip registration with a loud
 # warning rather than crash startup on an un-trustable hook.
 _MIN_POLICY_HOOK_CODEX_VERSION = (0, 129, 0)
+
+# Opt-in flag for the explicit ``--model`` launch flag. Off by default: the
+# per-session ``config.toml`` ``model =`` pin (``_pin_codex_config_model``)
+# already routes the override today, so the explicit flag is a parallel,
+# additive path the operator turns on per deployment. Truthy values mirror
+# the ``_TRUE_VALUES`` convention used across the codebase
+# (``omnigent/_startup_profile.py``, ``omnigent/cli.py``).
+_MODEL_FLAG_ENV_VAR = "OMNIGENT_CODEX_NATIVE_MODEL_FLAG"
+_MODEL_FLAG_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+# Codex CLI exposes ``-m/--model`` as a *global* option (it precedes the
+# ``app-server`` subcommand). When a codex build predates that flag, fall
+# back to seeding the model through this env var, which codex's config
+# loader reads in addition to the ``config.toml`` pin. Kept as a single
+# constant so the launch path and tests agree on the spelling.
+_CODEX_MODEL_ENV_VAR = "CODEX_MODEL"
+# Timeout for the one-shot ``codex --help`` capability probe. Matches the
+# ``codex --version`` probe budget — a hung help invocation must never block
+# app-server startup.
+_CODEX_HELP_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+def _model_flag_enabled(env: dict[str, str] | None = None) -> bool:
+    """
+    Return whether the explicit ``--model`` launch flag is opted in.
+
+    The flag is parallel to the always-on ``config.toml`` model pin, so it
+    defaults OFF: a deployment enables it by setting
+    :data:`_MODEL_FLAG_ENV_VAR` to a truthy value.
+
+    :param env: Environment mapping to inspect; defaults to ``os.environ``.
+    :returns: ``True`` when the override should also be passed as an
+        explicit launch flag (or its env fallback).
+    """
+    source = os.environ if env is None else env
+    return source.get(_MODEL_FLAG_ENV_VAR, "").strip().lower() in _MODEL_FLAG_TRUE_VALUES
+
+
+async def _codex_supports_model_flag(codex_path: str) -> bool:
+    """
+    Detect whether the codex CLI accepts a global ``--model`` flag.
+
+    Runs ``codex --help`` and looks for the ``--model`` long option in the
+    top-level options. Codex exposes ``-m/--model`` as a global flag that
+    precedes the ``app-server`` subcommand; builds that predate it omit the
+    option from ``--help``, so the caller routes the override through the
+    :data:`_CODEX_MODEL_ENV_VAR` env fallback instead.
+
+    :param codex_path: Path to the codex CLI, e.g.
+        ``"/usr/local/bin/codex"``.
+    :returns: ``True`` when ``--model`` appears in ``codex --help`` output;
+        ``False`` when it does not, or the probe cannot be run / times out
+        (treated conservatively as "unsupported" so the env fallback runs).
+    """
+    try:
+        proc = await _create_subprocess_exec(
+            codex_path,
+            "--help",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return False
+    try:
+        stdout, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=_CODEX_HELP_PROBE_TIMEOUT_SECONDS
+        )
+    except asyncio.TimeoutError:
+        # A hung ``codex --help`` must not block startup: kill it and treat
+        # the flag as unsupported (the env fallback still carries the model).
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        return False
+    return "--model" in stdout.decode("utf-8", errors="replace")
 
 
 def _format_codex_version(version: tuple[int, int, int] | None) -> str:
@@ -558,15 +634,30 @@ class CodexNativeAppServer:
                     ap_auth_headers=self.ap_auth_headers or {},
                 )
         resolved_listen = self.listen_url or f"unix://{self.socket_path}"
+        proc_env = {**self.env, "CODEX_HOME": str(self.codex_home)}
+        # Opt-in, additive to the config.toml ``model =`` pin above: when the
+        # operator enables the flag and a model is pinned, ALSO pass it
+        # explicitly. ``-m/--model`` is a codex *global* option, so it must
+        # precede the ``app-server`` subcommand; on a codex build that lacks
+        # the flag, fall back to seeding ``CODEX_MODEL`` in the spawn env
+        # (which codex's config loader honors) so the explicit path still
+        # carries the model. Either way the config.toml pin remains the
+        # primary route, so a probe failure never strands the session.
+        model_global_args: list[str] = []
+        if self.pinned_model and _model_flag_enabled(self.env):
+            if await _codex_supports_model_flag(self.codex_path):
+                model_global_args = ["--model", self.pinned_model]
+            else:
+                proc_env[_CODEX_MODEL_ENV_VAR] = self.pinned_model
         argv = [
             self.codex_path,
+            *model_global_args,
             "app-server",
             "--listen",
             resolved_listen,
         ]
         for override in self.config_overrides:
             argv.extend(["-c", override])
-        proc_env = {**self.env, "CODEX_HOME": str(self.codex_home)}
         self.proc = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.DEVNULL,
