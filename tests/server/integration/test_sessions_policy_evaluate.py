@@ -149,6 +149,26 @@ def _ask_for_bash(event: dict[str, Any]) -> dict[str, Any]:
     return {"result": "ALLOW"}
 
 
+def _ask_for_sensitive_output(event: dict[str, Any]) -> dict[str, Any]:
+    """
+    Policy that requires human approval (ASK) for tool results with ``REVIEW``.
+
+    Exercises the TOOL_RESULT ASK gate: pi-native can intercept a result before
+    the model consumes it, so a result-phase ASK must park server-side and
+    collapse to ALLOW / DENY (return / suppress the result) — never a raw ASK.
+
+    :param event: V0 event dict.
+    :returns: ASK for tool results containing REVIEW, ALLOW otherwise.
+    """
+    if event.get("type") != "tool_result":
+        return {"result": "ALLOW"}
+    data = event.get("data")
+    result = data.get("result", "") if isinstance(data, dict) else str(data)
+    if isinstance(result, str) and "REVIEW" in result:
+        return {"result": "ASK", "reason": "Approve releasing this tool result?"}
+    return {"result": "ALLOW"}
+
+
 # ── Helpers ─────────────────────────────────────────────────
 
 
@@ -623,6 +643,82 @@ async def test_tool_call_ask_returns_deny_on_decline(
         client.post(
             f"/v1/sessions/{session_id}/policies/evaluate",
             json=_tool_call_request("Bash"),
+        )
+    )
+
+    elicitation_id = await drain
+    verdict = await client.post(
+        f"/v1/sessions/{session_id}/elicitations/{elicitation_id}/resolve",
+        json={"action": "decline"},
+    )
+    assert verdict.status_code == 202, verdict.text
+
+    resp = await evaluate
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["result"] == "POLICY_ACTION_DENY"
+
+
+async def test_tool_result_ask_holds_gate_and_returns_allow_on_accept(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A TOOL_RESULT ASK parks server-side and collapses to ALLOW on accept.
+
+    pi-native's ``tool_result`` extension hook can replace/suppress a result
+    before the model consumes it, so the result checkpoint is a real gate.
+    Its only ASK primitive is this same URL-based elicitation, so the endpoint
+    must park a result-phase ASK (publish a card, hold the connection) and
+    return a hard ALLOW when the human accepts — never a raw ASK. ALLOW means
+    the extension returns the real result to the model.
+    """
+    _patch_default_policies(monkeypatch, f"{__name__}._ask_for_sensitive_output")
+    agent = await create_test_agent(client)
+    session_id = await _create_session(client, agent["id"])
+
+    drain = asyncio.create_task(_drain_elicitation_id(session_id))
+    await asyncio.sleep(0.05)
+    evaluate = asyncio.create_task(
+        client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json=_tool_result_request("please REVIEW this output"),
+        )
+    )
+
+    elicitation_id = await drain
+    verdict = await client.post(
+        f"/v1/sessions/{session_id}/elicitations/{elicitation_id}/resolve",
+        json={"action": "accept"},
+    )
+    assert verdict.status_code == 202, verdict.text
+
+    resp = await evaluate
+    assert resp.status_code == 200, resp.text
+    # Parked and collapsed to a hard verdict — NOT a raw ASK.
+    assert resp.json()["result"] == "POLICY_ACTION_ALLOW"
+
+
+async def test_tool_result_ask_returns_deny_on_decline(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A declined TOOL_RESULT ASK collapses to DENY so the extension suppresses it.
+
+    If the human refuses at the approve URL, the result must be withheld from
+    the model — the DENY verdict drives the extension's result-suppression
+    (replace output with a policy error).
+    """
+    _patch_default_policies(monkeypatch, f"{__name__}._ask_for_sensitive_output")
+    agent = await create_test_agent(client)
+    session_id = await _create_session(client, agent["id"])
+
+    drain = asyncio.create_task(_drain_elicitation_id(session_id))
+    await asyncio.sleep(0.05)
+    evaluate = asyncio.create_task(
+        client.post(
+            f"/v1/sessions/{session_id}/policies/evaluate",
+            json=_tool_result_request("please REVIEW this output"),
         )
     )
 

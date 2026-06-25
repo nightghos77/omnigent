@@ -14555,6 +14555,17 @@ def create_sessions_router(
         PolicyAction.DENY: "POLICY_ACTION_DENY",
         PolicyAction.ASK: "POLICY_ACTION_ASK",
     }
+    # Phases whose ASK verdict is resolved server-side via URL-based
+    # elicitation (publish an approval card, park, collapse to ALLOW/DENY)
+    # rather than returned raw to the native caller. Defined once so the two
+    # checkpoints in ``evaluate_policy`` (initial check + re-check under the
+    # serialize lock) cannot drift. See the long-form rationale at the gate.
+    _NATIVE_ASK_GATE_PHASES: tuple[Phase, ...] = (
+        Phase.TOOL_CALL,
+        Phase.LLM_REQUEST,
+        Phase.REQUEST,
+        Phase.TOOL_RESULT,
+    )
 
     # ── POST /sessions/{session_id}/policies/evaluate ─────────────
 
@@ -14707,23 +14718,27 @@ def create_sessions_router(
         ctx = _build_evaluation_context(phase, data, event, actor=_build_actor(user_id))
         result = await engine.evaluate(ctx, read_only=is_read_only)
 
-        # URL-based elicitation for blocking phases: on a TOOL_CALL or
-        # LLM_REQUEST ASK, hold the gate server-side rather than
-        # returning ASK. Returning ASK makes the native hook emit
-        # ``defer``, which a permissive ``permission_mode``
-        # (acceptEdits / bypassPermissions) auto-approves — bypassing
-        # the human. Instead we publish the approval elicitation, park
-        # until the human resolves it via the resolve URL, and collapse
-        # to a hard ALLOW / DENY so the caller never sees ASK.
-        # TOOL_CALL, LLM_REQUEST, and REQUEST are the phases that can block
-        # before the action proceeds (tool dispatch / LLM call / a native
-        # session's user prompt via the UserPromptSubmit hook — which has no
-        # ASK primitive of its own, so the server resolves ASK here).
-        if result.action == PolicyAction.ASK and phase in (
-            Phase.TOOL_CALL,
-            Phase.LLM_REQUEST,
-            Phase.REQUEST,
-        ):
+        # URL-based elicitation for ASK-gating phases: on an ASK, hold the
+        # gate server-side rather than returning ASK. Returning ASK makes the
+        # native hook emit ``defer``, which a permissive ``permission_mode``
+        # (acceptEdits / bypassPermissions) auto-approves — bypassing the
+        # human. Instead we publish the approval elicitation, park until the
+        # human resolves it via the resolve URL, and collapse to a hard ALLOW /
+        # DENY so the caller never sees ASK.
+        #
+        # TOOL_CALL, LLM_REQUEST, and REQUEST block before the action proceeds
+        # (tool dispatch / LLM call / a native session's user prompt via the
+        # UserPromptSubmit hook — which has no ASK primitive of its own).
+        # TOOL_RESULT runs *after* the tool executed, but a native harness that
+        # can intercept the result before the model consumes it (pi-native's
+        # ``tool_result`` extension hook can replace/suppress the result) still
+        # needs the human verdict resolved here: its only ASK primitive is this
+        # same long-poll, so park TOOL_RESULT too and collapse to ALLOW (return
+        # the result) / DENY (suppress it). The native hooks that *cannot*
+        # intercept a committed result (Claude/Codex PostToolUse) surface DENY
+        # as advisory context and never POST a TOOL_RESULT ASK that needs
+        # parking, so adding TOOL_RESULT here is inert for them.
+        if result.action == PolicyAction.ASK and phase in _NATIVE_ASK_GATE_PHASES:
             if is_read_only:
                 # Read-only callers must not enter the ASK gate — parking
                 # creates an elicitation (a server-side mutation). Return
@@ -14742,10 +14757,9 @@ def create_sessions_router(
                 async with _native_ask_gate_lock(session_id, result.deciding_policy):
                     engine = _build_engine()
                     result = await engine.evaluate(ctx, read_only=is_read_only)
-                    if result.action == PolicyAction.ASK and phase in (
-                        Phase.TOOL_CALL,
-                        Phase.LLM_REQUEST,
-                        Phase.REQUEST,
+                    if (
+                        result.action == PolicyAction.ASK
+                        and phase in _NATIVE_ASK_GATE_PHASES
                     ):
                         approved = await _hold_native_ask_gate(
                             request,
