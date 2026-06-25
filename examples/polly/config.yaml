@@ -30,9 +30,6 @@ executor:
   context_window: 1000000
   config:
     harness: claude-sdk
-    # Intelligent model routing is now server-side: the session toggle
-    # ("Smart routing") triggers a server-side judge call that infers
-    # available models from the harness type.  No per-agent config needed.
 
 prompt: |
   You are polly, a multi-agent CODING orchestrator. You are the tech lead, not
