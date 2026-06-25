@@ -304,3 +304,54 @@ def test_anthropic_family_ignores_wire_api() -> None:
     assert provider.base_url == "https://api.anthropic.com"
     assert provider.model == "claude-4"
     assert provider.api_key == "sk-test"
+
+
+def test_model_override_beats_databricks_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A session model override wins over the Databricks gateway default.
+
+    This is the spec-driven model-override path: the runner reads the agent
+    spec's ``executor.model`` and threads it into ``resolve_pi_native_provider``,
+    so the rendered ``models.json`` selects the requested model rather than the
+    ``databricks-claude-sonnet-4-6`` default.
+    """
+    from omnigent.inner import databricks_executor
+
+    monkeypatch.setattr(
+        databricks_executor,
+        "_read_databrickscfg_host",
+        lambda profile: "https://wkspc.example.com/",
+    )
+
+    provider = creds.resolve_pi_native_provider(
+        model="databricks-claude-opus-4-7", config_loader=_databricks_config
+    )
+
+    assert provider is not None
+    assert provider.model == "databricks-claude-opus-4-7"
+    # The override flows all the way into the rendered models.json.
+    cfg = provider.to_models_config()
+    assert cfg["providers"]["omnigent"]["models"] == [{"id": "databricks-claude-opus-4-7"}]
+
+
+def test_model_override_beats_inline_family_default() -> None:
+    """A session model override wins over an inline family's default model."""
+    config = {
+        "providers": {
+            "anthropic": {
+                "kind": "key",
+                "default": True,
+                "anthropic": {
+                    "base_url": "https://api.anthropic.com",
+                    "api_key": "sk-test",
+                    "models": {"default": "claude-sonnet-4-6"},
+                },
+            }
+        }
+    }
+    provider = creds.resolve_pi_native_provider(
+        model="claude-opus-4-7", config_loader=lambda: config
+    )
+    assert provider is not None
+    assert provider.model == "claude-opus-4-7"
+    cfg = provider.to_models_config()
+    assert cfg["providers"]["omnigent"]["models"] == [{"id": "claude-opus-4-7"}]
