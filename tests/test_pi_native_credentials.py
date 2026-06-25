@@ -335,8 +335,7 @@ def test_cli_config_databricks_resolves_to_anthropic_gateway(
     assert provider.api == "anthropic-messages"
     # /codex/v1 rewritten to the /anthropic surface Pi speaks natively.
     assert (
-        provider.base_url
-        == "https://1965859176160743.ai-gateway.cloud.databricks.com/anthropic"
+        provider.base_url == "https://1965859176160743.ai-gateway.cloud.databricks.com/anthropic"
     )
     assert provider.model == "databricks-claude-sonnet-4-6"
     assert provider.auth_header is True
@@ -361,8 +360,7 @@ def test_cli_config_databricks_respects_model_override(
     assert provider is not None
     assert provider.model == "databricks-claude-opus-4-8"
     assert (
-        provider.base_url
-        == "https://1965859176160743.ai-gateway.cloud.databricks.com/anthropic"
+        provider.base_url == "https://1965859176160743.ai-gateway.cloud.databricks.com/anthropic"
     )
 
 
@@ -415,8 +413,7 @@ def test_cli_config_databricks_warns_on_unresolvable(
 
     with caplog.at_level(logging.INFO, logger="omnigent.pi_native_credentials"):
         assert (
-            creds.resolve_pi_native_provider(config_loader=_cli_config_databricks_config)
-            is None
+            creds.resolve_pi_native_provider(config_loader=_cli_config_databricks_config) is None
         )
     assert any("codex-databricks" in rec.getMessage() for rec in caplog.records)
 

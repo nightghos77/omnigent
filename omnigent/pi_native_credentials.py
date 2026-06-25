@@ -158,9 +158,7 @@ def _gateway_anthropic_base_url(codex_base_url: str) -> str:
     return f"{trimmed}{_DATABRICKS_GATEWAY_ANTHROPIC_SUFFIX}"
 
 
-def _cli_config_pi_provider(
-    entry: ProviderEntry, *, model: str | None
-) -> PiProviderConfig | None:
+def _cli_config_pi_provider(entry: ProviderEntry, *, model: str | None) -> PiProviderConfig | None:
     """Resolve a Codex ``cli-config`` Databricks-gateway provider into Pi config.
 
     The common enterprise setup: ``isaac configure codex`` writes a custom
