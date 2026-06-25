@@ -1989,24 +1989,12 @@ async def _auto_create_goose_terminal(
     from omnigent.codex_native_bridge import write_mcp_bridge_config
     from omnigent.goose_native_bridge import (
         goose_mcp_extension_value,
-        isolated_goose_sessions_db,
-        setup_goose_isolated_home,
         write_goose_mcp_launcher,
         write_goose_policy_plugin,
     )
 
     await asyncio.to_thread(write_mcp_bridge_config, bridge_dir)
     await asyncio.to_thread(write_goose_mcp_launcher, bridge_dir)
-
-    # Isolated per-session goose home (via GOOSE_PATH_ROOT): lets us register the
-    # Omnigent PreToolUse policy hook as a goose plugin WITHOUT touching the
-    # user's repo or real ~/.config/goose. Seeded from the user's config.yaml
-    # (provider/model/extensions); the API key resolves via the OS keyring, which
-    # is path-independent. goose then writes its sessions.db under this home, so
-    # the pollers must read the relocated path.
-    goose_home = await asyncio.to_thread(setup_goose_isolated_home, bridge_dir)
-    await asyncio.to_thread(write_goose_policy_plugin, bridge_dir)
-    goose_sessions_db = isolated_goose_sessions_db(bridge_dir)
     server_url = _required_runner_env("RUNNER_SERVER_URL")
 
     # ``_pi_native_launch_config`` is a generic session-snapshot reader
@@ -2016,6 +2004,15 @@ async def _auto_create_goose_terminal(
         server_client=server_client,
     )
     workspace = os.path.realpath(str(launch_config.workspace))
+
+    # Register the Omnigent PreToolUse policy hook as a PROJECT-SCOPE goose plugin
+    # in the workspace (``<workspace>/.agents/plugins/omnigent-policy``). goose
+    # discovers it from its cwd and runs on its REAL home, so credentials resolve
+    # via the OS keyring exactly as the user's own ``goose`` does. (An isolated
+    # ``GOOSE_PATH_ROOT`` home was tried first but broke startup: goose couldn't
+    # read the keychain key and died, so the terminal never went ready.) The
+    # plugin is git-excluded so it never shows in ``git status``.
+    await asyncio.to_thread(write_goose_policy_plugin, Path(workspace))
 
     # A fork into goose carries history as a text preamble: a fresh
     # ``goose session --name <fork>`` has no prior history, so render the copied
@@ -2041,18 +2038,17 @@ async def _auto_create_goose_terminal(
 
     goose_command = resolve_goose_executable()
     # GOOSE_MODE=auto: goose runs tools without its own in-TUI confirmation — the
-    # Omnigent PreToolUse policy hook (a plugin in the isolated home) is the gate
-    # now, blocking on a DENY verdict whether the turn came from the web composer
-    # OR was typed directly into the embedded terminal (goose's PreToolUse hook is
-    # blocking). GOOSE_PATH_ROOT isolates goose's home so the policy plugin is
-    # discovered without touching the user's repo/config; ``_OMNIGENT_*`` let the
-    # hook reach the policy endpoint (it inherits this env). Provider/model/auth
-    # come from the user's config.yaml (seeded into the home) + OS keyring.
+    # Omnigent PreToolUse policy hook (the project-scope plugin written above) is
+    # the gate now, blocking on a DENY verdict whether the turn came from the web
+    # composer OR was typed directly into the embedded terminal (goose's
+    # PreToolUse hook is blocking). ``_OMNIGENT_*`` let the hook reach the policy
+    # endpoint (the hook subprocess inherits this env). goose runs on its real
+    # home, so provider/model/auth come from the user's own ``goose configure`` +
+    # OS keyring (NO GOOSE_PATH_ROOT — isolating the home broke keychain auth).
     goose_env: dict[str, str] = {
         "GOOSE_CLI_THEME": "ansi",
         "GOOSE_TELEMETRY_OFF": "1",
         "GOOSE_MODE": "auto",
-        "GOOSE_PATH_ROOT": str(goose_home),
         "_OMNIGENT_SERVER_URL": server_url,
         "_OMNIGENT_SESSION_ID": session_id,
     }
@@ -2087,8 +2083,8 @@ async def _auto_create_goose_terminal(
             # suppresses Goose's first-run "share usage data?" prompt, which
             # would otherwise block the headless pane on a fresh install. Tool
             # gating is the Omnigent PreToolUse policy hook (GOOSE_MODE=auto, no
-            # in-TUI prompt). Provider/model/auth come from the user's config
-            # seeded into the isolated home + OS keyring (see goose_env above).
+            # in-TUI prompt). Provider/model/auth come from the user's own
+            # `goose configure` + OS keyring (goose's real home; see goose_env).
             env=goose_env,
             scrollback=100_000,
             tmux_allow_passthrough=True,
@@ -2145,8 +2141,9 @@ async def _auto_create_goose_terminal(
         poller records tool-RESULT policy decisions (observability only — goose
         has no post-exec hook to block on; see :mod:`omnigent.goose_native_audit`).
         Tool-CALL policy enforcement is NOT here — it's the goose PreToolUse
-        plugin hook (:mod:`omnigent.inner.goose_policy_hook`), which blocks inside
-        goose's own loop. All three pollers read the isolated home's sessions.db.
+        project-scope plugin hook (:mod:`omnigent.inner.goose_policy_hook`), which
+        blocks inside goose's own loop. The pollers read goose's default
+        sessions.db (goose runs on its real home).
         """
         await asyncio.gather(
             supervise_goose_forwarder(
@@ -2156,7 +2153,6 @@ async def _auto_create_goose_terminal(
                 bridge_dir=bridge_dir,
                 agent_name="goose-native-ui",
                 goose_session_name=goose_session_name,
-                db_path=goose_sessions_db,
                 auth=_runner_auth,
             ),
             supervise_goose_usage_forwarder(
@@ -2165,7 +2161,6 @@ async def _auto_create_goose_terminal(
                 session_id=session_id,
                 bridge_dir=bridge_dir,
                 goose_session_name=goose_session_name,
-                db_path=goose_sessions_db,
                 auth=_runner_auth,
             ),
             supervise_goose_audit_forwarder(
@@ -2174,7 +2169,6 @@ async def _auto_create_goose_terminal(
                 session_id=session_id,
                 bridge_dir=bridge_dir,
                 goose_session_name=goose_session_name,
-                db_path=goose_sessions_db,
                 auth=_runner_auth,
             ),
         )

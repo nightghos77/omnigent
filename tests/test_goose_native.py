@@ -63,47 +63,18 @@ def test_write_goose_mcp_launcher_named_and_executable(tmp_path) -> None:
     assert b.goose_mcp_extension_value(tmp_path) == str(tmp_path / "omnigent_mcp")
 
 
-def test_setup_goose_isolated_home_copies_user_config(tmp_path, monkeypatch) -> None:
-    from omnigent import goose_native_bridge as b
-    from omnigent.onboarding import goose_auth
-
-    user_cfg = tmp_path / "user" / "goose" / "config.yaml"
-    user_cfg.parent.mkdir(parents=True)
-    user_cfg.write_text("GOOSE_PROVIDER: anthropic\n")
-    monkeypatch.setattr(goose_auth, "goose_config_path", lambda: user_cfg)
-
-    bridge = tmp_path / "bridge"
-    home = b.setup_goose_isolated_home(bridge)
-    assert home == bridge / "goose_home"
-    # config.yaml carried into <home>/config so provider/model/extensions survive.
-    assert (home / "config" / "config.yaml").read_text() == "GOOSE_PROVIDER: anthropic\n"
-    # The pollers must read the relocated sessions.db under the isolated home.
-    assert (
-        b.isolated_goose_sessions_db(bridge)
-        == bridge / "goose_home" / "data" / "sessions" / "sessions.db"
-    )
-
-
-def test_setup_goose_isolated_home_tolerates_missing_user_config(tmp_path, monkeypatch) -> None:
-    from omnigent import goose_native_bridge as b
-    from omnigent.onboarding import goose_auth
-
-    monkeypatch.setattr(goose_auth, "goose_config_path", lambda: tmp_path / "nope.yaml")
-    home = b.setup_goose_isolated_home(tmp_path / "bridge")
-    assert (home / "config").is_dir()
-    assert not (home / "config" / "config.yaml").exists()
-
-
-def test_write_goose_policy_plugin_registers_pretooluse_hook(tmp_path) -> None:
+def test_write_goose_policy_plugin_project_scope(tmp_path) -> None:
     import json as _json
 
     from omnigent import goose_native_bridge as b
 
-    bridge = tmp_path / "bridge"
-    hooks_file = b.write_goose_policy_plugin(bridge, python_executable="/usr/bin/python3")
-    # Lives under the isolated home's plugin dir (so GOOSE_PATH_ROOT discovers it).
-    assert hooks_file == b.goose_policy_plugin_hooks_file(bridge)
-    assert hooks_file.parts[-5:] == (
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    hooks_file = b.write_goose_policy_plugin(ws, python_executable="/usr/bin/python3")
+    # Project-scope: <workspace>/.agents/plugins/omnigent-policy/hooks/hooks.json
+    # (goose discovers it from its cwd; real home → keychain auth keeps working).
+    assert hooks_file == b.goose_policy_plugin_hooks_file(ws)
+    assert hooks_file.relative_to(ws).parts == (
         ".agents",
         "plugins",
         "omnigent-policy",
@@ -114,3 +85,18 @@ def test_write_goose_policy_plugin_registers_pretooluse_hook(tmp_path) -> None:
     command = cfg["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "omnigent.inner.goose_policy_hook" in command
     assert "/usr/bin/python3" in command
+
+
+def test_write_goose_policy_plugin_git_excludes_and_clears(tmp_path) -> None:
+    from omnigent import goose_native_bridge as b
+
+    ws = tmp_path / "workspace"
+    (ws / ".git" / "info").mkdir(parents=True)  # looks like a git repo
+    b.write_goose_policy_plugin(ws, python_executable="/usr/bin/python3")
+    # Best-effort git-exclude so the plugin never shows in `git status`.
+    exclude = (ws / ".git" / "info" / "exclude").read_text()
+    assert ".agents/plugins/omnigent-policy/" in exclude
+    # Teardown removes the plugin dir.
+    assert b.goose_policy_plugin_dir(ws).is_dir()
+    b.clear_goose_policy_plugin(ws)
+    assert not b.goose_policy_plugin_dir(ws).exists()

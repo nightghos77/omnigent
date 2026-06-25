@@ -109,14 +109,16 @@ GOOSE_MODE=auto  → goose runs tools with NO in-TUI prompt; the hook is the gat
   (`_hold_native_ask_gate`, `sessions.py:3907`): it publishes the approval card,
   parks the hook's HTTP request until the human answers, and returns a hard
   ALLOW/DENY. The hook is synchronous (read-timeout 1 day), so this Just Works.
-- **Registration via an isolated home.** goose discovers hooks from a plugin's
-  `<plugins_dir>/<name>/hooks/hooks.json`. To register ours without touching the
-  user's repo or real `~/.config/goose`, the runner sets **`GOOSE_PATH_ROOT`** to
-  a per-session home under the bridge dir (rebases config/data/plugins) and
-  writes the plugin there. The home is seeded by copying the user's
-  `~/.config/goose/config.yaml` (provider/model/extensions); the API key resolves
-  via the OS keyring (path-independent). goose's sessions.db relocates under the
-  home, so the forwarder/usage/audit pollers are pointed at it.
+- **Registration as a project-scope plugin.** goose discovers hooks from a
+  plugin's `<plugins_dir>/<name>/hooks/hooks.json`, where one `plugins_dir` is
+  `<project_root>/.agents/plugins` and `project_root` = goose's cwd = the session
+  workspace. So the runner writes the plugin to
+  `<workspace>/.agents/plugins/omnigent-policy/` and best-effort git-excludes it
+  (`.git/info/exclude`) so it never shows in `git status`. goose stays on its
+  **real home**, so credentials resolve via the OS keyring exactly as the user's
+  own `goose`. **An isolated `GOOSE_PATH_ROOT` home was tried first and removed:
+  it broke startup — goose couldn't read the keychain key in the rebased home and
+  died, so the terminal never went ready (60s timeout). Live-confirmed on macOS.**
 - **Fail-closed.** Network error / retry exhaustion → the hook prints
   `block` (deny). A truly-unexpected hook crash fails open (goose proceeds) — the
   same contract as `hermes_policy_hook`.
@@ -127,12 +129,13 @@ GOOSE_MODE=auto  → goose runs tools with NO in-TUI prompt; the hook is the gat
   `inner/hermes_policy_hook.py`. Reads `_OMNIGENT_SERVER_URL` /
   `_OMNIGENT_SESSION_ID` from the inherited env, POSTs `PHASE_TOOL_CALL` via
   `native_policy_hook.post_evaluate_with_retry`, maps DENY/ASK → block.
-- `goose_native_bridge.py` — `setup_goose_isolated_home` (GOOSE_PATH_ROOT seed),
-  `write_goose_policy_plugin` (the `hooks.json`), `isolated_goose_sessions_db`.
-- `runner/app.py` — `GOOSE_MODE=auto`; set `GOOSE_PATH_ROOT` + `_OMNIGENT_*`;
-  seed home + write plugin before launch; thread the isolated `db_path` to the
-  three pollers. The cliclack-scrape mirror (`goose_native_permissions.py`) and
-  its `approve`-mode are **removed**.
+- `goose_native_bridge.py` — `write_goose_policy_plugin(workspace)` writes the
+  project-scope `hooks.json` + git-excludes it; `clear_goose_policy_plugin` for
+  teardown. (No isolated home / sessions repoint — goose uses its real home.)
+- `runner/app.py` — `GOOSE_MODE=auto`; set `_OMNIGENT_*`; write the project-scope
+  plugin into the workspace before launch. The pollers read goose's default
+  sessions.db. The cliclack-scrape mirror (`goose_native_permissions.py`) and its
+  `approve`-mode are **removed**.
 - `claude_native_bridge.py` — add the goose-native bridge root to the `serve-mcp`
   allowlist (`_trusted_parent_for_bridge_dir`) so the Omnigent MCP extension can
   boot (found in live testing).
@@ -296,7 +299,7 @@ Tier-2 PR if this one grows too large to review.
 
 | Group | Items | Effort | Risk |
 |---|---|---|---|
-| **Policy** (§3) | goose `PreToolUse` plugin hook → `/policies/evaluate`; isolated `GOOSE_PATH_ROOT` home; tests | done | low (native hook) |
+| **Policy** (§3) | goose `PreToolUse` project-scope plugin hook → `/policies/evaluate`; real home (keychain auth); tests | done | low (native hook) |
 | **MCP** (§5.1) | `--with-streamable-http-extension` at launch; `mcp__omnigent__*` skip in the §3 gate | ~2–3 days | medium |
 | **Tier-1** (§4) | reasoning → model-launch → cost → fork | ~5–6 days | low–medium |
 

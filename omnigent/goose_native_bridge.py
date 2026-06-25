@@ -106,92 +106,45 @@ def goose_mcp_extension_value(bridge_dir: Path) -> str:
     return str(bridge_dir / MCP_EXTENSION_NAME)
 
 
-#: Subdir of the bridge dir used as a per-session, isolated goose home via the
-#: ``GOOSE_PATH_ROOT`` env var. Isolating the home lets the runner register an
-#: Omnigent policy hook (a goose plugin) WITHOUT writing into the user's repo or
-#: their real ``~/.config/goose``. goose rebases config→``<root>/config``,
-#: data→``<root>/data``, plugins→``<root>/.agents/plugins`` under it (paths.rs).
-GOOSE_HOME_SUBDIR = "goose_home"
-
-#: Plugin name under the isolated home that carries the Omnigent policy hook.
+#: Plugin name (a project-scope goose plugin) carrying the Omnigent policy hook.
 POLICY_PLUGIN_NAME = "omnigent-policy"
 
 
-def goose_home_dir(bridge_dir: Path) -> Path:
-    """Return the per-session isolated goose home (the ``GOOSE_PATH_ROOT`` value)."""
-    return bridge_dir / GOOSE_HOME_SUBDIR
+def goose_policy_plugin_dir(workspace: Path) -> Path:
+    """Return the Omnigent policy plugin dir for *workspace* (project scope).
 
-
-def isolated_goose_sessions_db(bridge_dir: Path) -> Path:
-    """Return the sessions.db path goose uses under the isolated home.
-
-    With ``GOOSE_PATH_ROOT=<home>``, goose's data dir is ``<home>/data`` and the
-    store is ``<home>/data/sessions/sessions.db`` (session_manager.rs +
-    paths.rs). The pollers must read THIS path, not the default home.
+    goose discovers plugins from ``<project_root>/.agents/plugins/<name>/`` (with
+    ``project_root`` = goose's cwd = the session workspace) and loads their
+    ``hooks/hooks.json`` (plugins/discovery.rs + hooks/mod.rs). Using project
+    scope keeps goose on its REAL home, so credentials resolve via the OS keyring
+    exactly as the user's own ``goose`` does — an isolated ``GOOSE_PATH_ROOT``
+    home broke that (goose couldn't read the keychain key and died on startup).
     """
-    return goose_home_dir(bridge_dir) / "data" / "sessions" / "sessions.db"
+    return workspace / ".agents" / "plugins" / POLICY_PLUGIN_NAME
 
 
-def goose_policy_plugin_hooks_file(bridge_dir: Path) -> Path:
-    """Return the ``hooks.json`` path for the Omnigent policy plugin in the home.
-
-    goose discovers plugins under ``<home>/.agents/plugins/<name>/`` and loads
-    their ``hooks/hooks.json`` (plugins/discovery.rs + hooks/mod.rs).
-    """
-    return (
-        goose_home_dir(bridge_dir)
-        / ".agents"
-        / "plugins"
-        / POLICY_PLUGIN_NAME
-        / "hooks"
-        / "hooks.json"
-    )
+def goose_policy_plugin_hooks_file(workspace: Path) -> Path:
+    """Return the ``hooks.json`` path for the project-scope Omnigent policy plugin."""
+    return goose_policy_plugin_dir(workspace) / "hooks" / "hooks.json"
 
 
-def setup_goose_isolated_home(bridge_dir: Path) -> Path:
-    """Create + seed the per-session isolated goose home; return its path.
-
-    Seeds ``<home>/config/config.yaml`` from the user's real
-    ``~/.config/goose/config.yaml`` (resolved cross-platform — goose uses the
-    XDG-style ``choose_app_strategy`` on every OS) so the user's provider, model,
-    and extensions carry into the isolated home. The API key resolves via the OS
-    keyring, which is path-independent, so auth keeps working. When the user has
-    no ``config.yaml`` (all-keyring setup), the copy is skipped and goose falls
-    back to ``GOOSE_PROVIDER`` / ``GOOSE_MODEL`` env + keyring.
-
-    :param bridge_dir: The goose-native bridge dir.
-    :returns: The isolated home path (use as ``GOOSE_PATH_ROOT``).
-    """
-    from omnigent.onboarding.goose_auth import goose_config_path
-
-    home = goose_home_dir(bridge_dir)
-    config_dst_dir = home / "config"
-    config_dst_dir.mkdir(parents=True, exist_ok=True)
-    src = goose_config_path()
-    if src.is_file():
-        with contextlib.suppress(OSError):
-            shutil.copyfile(src, config_dst_dir / "config.yaml")
-    return home
-
-
-def write_goose_policy_plugin(bridge_dir: Path, *, python_executable: str | None = None) -> Path:
-    """Write the Omnigent policy plugin's ``hooks.json`` in the isolated home.
+def write_goose_policy_plugin(workspace: Path, *, python_executable: str | None = None) -> Path:
+    """Write the project-scope Omnigent policy plugin's ``hooks.json``.
 
     Registers a ``PreToolUse`` command hook so goose evaluates every tool call
     against Omnigent policy (block on DENY) — the goose analog of claude-/hermes-
-    native policy hooks, and the reason the isolated home exists (so this plugin
-    is discovered without touching the user's repo or real goose config). goose
-    auto-enables a newly discovered plugin, and runs the command via ``sh`` with
-    the terminal's env inherited (so the hook reads ``_OMNIGENT_SERVER_URL`` /
-    ``_OMNIGENT_SESSION_ID``).
+    native policy hooks. goose auto-enables a newly discovered plugin and runs the
+    command via ``sh`` with the terminal's env inherited (so the hook reads
+    ``_OMNIGENT_SERVER_URL`` / ``_OMNIGENT_SESSION_ID``). Best-effort git-excludes
+    the plugin so it never shows in the user's ``git status``.
 
-    :param bridge_dir: The goose-native bridge dir.
+    :param workspace: The goose session's workspace (goose's cwd / project root).
     :param python_executable: Python to run the hook; defaults to
         :data:`sys.executable`.
     :returns: The written ``hooks.json`` path.
     """
     python = python_executable or sys.executable
-    hooks_file = goose_policy_plugin_hooks_file(bridge_dir)
+    hooks_file = goose_policy_plugin_hooks_file(workspace)
     hooks_file.parent.mkdir(parents=True, exist_ok=True)
     config = {
         "hooks": {
@@ -210,7 +163,31 @@ def write_goose_policy_plugin(bridge_dir: Path, *, python_executable: str | None
     tmp = hooks_file.parent / "hooks.json.tmp"
     tmp.write_text(json.dumps(config, indent=2), encoding="utf-8")
     os.replace(tmp, hooks_file)
+    _git_exclude_policy_plugin(workspace)
     return hooks_file
+
+
+def _git_exclude_policy_plugin(workspace: Path) -> None:
+    """Best-effort add the policy plugin to ``.git/info/exclude`` (local ignore)."""
+    git_dir = workspace / ".git"
+    if not git_dir.is_dir():
+        return
+    entry = f".agents/plugins/{POLICY_PLUGIN_NAME}/"
+    exclude = git_dir / "info" / "exclude"
+    with contextlib.suppress(OSError):
+        existing = exclude.read_text(encoding="utf-8") if exclude.is_file() else ""
+        if entry not in existing.splitlines():
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            with open(exclude, "a", encoding="utf-8") as handle:
+                handle.write(
+                    ("" if existing.endswith("\n") or not existing else "\n") + entry + "\n"
+                )
+
+
+def clear_goose_policy_plugin(workspace: Path) -> None:
+    """Remove the project-scope policy plugin dir (teardown / clean re-launch)."""
+    with contextlib.suppress(OSError):
+        shutil.rmtree(goose_policy_plugin_dir(workspace), ignore_errors=True)
 
 
 def _ensure_dir(path: Path) -> None:
