@@ -229,7 +229,6 @@ async def test_conversational_verdict_skips_label_and_apply() -> None:
     assert judge.call_count == 1
 
 
-
 # ── Optimize mode: apply + persist + note ──────────────────────────────────────
 
 
