@@ -1641,8 +1641,7 @@ def create_app(
             from omnigent.runtime._globals import _caps
 
             smart_routing_enabled = _caps is not None and (
-                _caps.routing_client is not None
-                or _caps.policy_llm_connection_factory is not None
+                _caps.routing_client is not None or _caps.policy_llm_connection_factory is not None
             )
         except ImportError:
             smart_routing_enabled = False

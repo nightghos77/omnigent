@@ -8039,9 +8039,7 @@ async def _emit_server_routing_decision(
         data=parsed_data,
     )
     try:
-        persisted = await asyncio.to_thread(
-            conversation_store.append, session_id, [routing_item]
-        )
+        persisted = await asyncio.to_thread(conversation_store.append, session_id, [routing_item])
         persisted_id: str | None = persisted[0].id if persisted else None
     except Exception:
         _logger.exception(
