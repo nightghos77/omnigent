@@ -858,6 +858,7 @@ export function AppShell() {
     setPanelInitialKey(null); // close terminals panel
     setFilesPanelOpen(false); // close files drawer
     setSubagentsPanelOpen(false); // close mobile agents drawer
+    setShellsPanelOpen(false); // close mobile shells drawer
     setTodosPanelOpen(false); // close mobile tasks drawer
     setExecutionLogsKey(key);
   }
