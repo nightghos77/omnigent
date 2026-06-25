@@ -1007,6 +1007,7 @@ async def _auto_create_opencode_terminal(
         prepare_bridge_dir,
         seed_opencode_auth,
         write_bridge_state,
+        write_opencode_policy_plugin,
         write_relay_bridge_config,
     )
     from omnigent.opencode_native_forwarder import OpenCodeNativeForwarder
@@ -1087,6 +1088,31 @@ async def _auto_create_opencode_terminal(
         config["mcp"] = mcp_block
         config["permission"] = "ask"
 
+    # Load the Omnigent policy-bridge plugin so opencode's lifecycle hooks reach
+    # the policy engine at phases the reactive permission.asked path can't:
+    # REQUEST (gate TUI-typed prompts at submit) and TOOL_RESULT (gate/redact
+    # tool output). The plugin POSTs PHASE_REQUEST / PHASE_TOOL_RESULT to
+    # ``/policies/evaluate`` (same contract as claude's UserPromptSubmit /
+    # PostToolUse hooks); coordinates come from the OMNIGENT_* env stamped on
+    # the server below. Only wired when there's a server to evaluate against.
+    policy_env: dict[str, str] = {}
+    runner_server_url = os.environ.get("RUNNER_SERVER_URL")
+    if server_client is not None and runner_server_url:
+        plugin_path = write_opencode_policy_plugin(bridge_dir)
+        config.setdefault("$schema", "https://opencode.ai/config.json")
+        config["plugin"] = [str(plugin_path)]
+        policy_env["OMNIGENT_POLICY_URL"] = runner_server_url
+        policy_env["OMNIGENT_SESSION_ID"] = session_id
+        # One-shot auth-token snapshot (mirrors codex's policy_hook.json /
+        # cost-popup). Long-session staleness degrades to fail-open (no
+        # enforcement), like codex; a refreshable token file is the follow-up.
+        from omnigent.runner._entry import _make_auth_token_factory
+
+        _policy_factory = _make_auth_token_factory()
+        _policy_token = _policy_factory() if _policy_factory is not None else None
+        if _policy_token:
+            policy_env["OMNIGENT_POLICY_AUTH"] = f"Bearer {_policy_token}"
+
     if config:
         write_opencode_provider_config(xdg_config_home_for_bridge_dir(bridge_dir), config)
 
@@ -1107,7 +1133,11 @@ async def _auto_create_opencode_terminal(
             await_notify=False,
         )
 
-    server = OpenCodeNativeServer(bridge_dir=bridge_dir, workspace=launch_config.workspace)
+    server = OpenCodeNativeServer(
+        bridge_dir=bridge_dir,
+        workspace=launch_config.workspace,
+        extra_env=policy_env or None,
+    )
     await server.start()
     _AUTO_OPENCODE_SERVERS[session_id] = server
 

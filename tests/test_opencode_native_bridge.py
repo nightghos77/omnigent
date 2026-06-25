@@ -23,6 +23,7 @@ from omnigent.opencode_native_bridge import (
     update_model_override,
     write_bridge_state,
     write_cost_popup_config,
+    write_opencode_policy_plugin,
     write_relay_bridge_config,
     xdg_config_home_for_bridge_dir,
     xdg_data_home_for_bridge_dir,
@@ -150,6 +151,23 @@ def test_write_cost_popup_config_writes_ap_routing(bridge_dir: Path) -> None:
     # Rewritten (not skipped) so a later checkpoint gets a fresh token.
     write_cost_popup_config(bridge_dir, ap_server_url="http://h:1", ap_auth_headers={})
     assert json.loads(path.read_text()) == {"ap_server_url": "http://h:1", "ap_auth_headers": {}}
+
+
+def test_write_opencode_policy_plugin(bridge_dir: Path) -> None:
+    path = write_opencode_policy_plugin(bridge_dir)
+    assert path.name == "omnigent-policy.js"
+    src = path.read_text(encoding="utf-8")
+    # The two phase hooks the reactive permission path can't reach.
+    assert '"chat.message"' in src  # REQUEST phase
+    assert '"tool.execute.after"' in src  # TOOL_RESULT phase
+    # Posts the proto phases + reads its coordinates from env.
+    assert "PHASE_REQUEST" in src and "PHASE_TOOL_RESULT" in src
+    assert "OMNIGENT_POLICY_URL" in src and "OMNIGENT_SESSION_ID" in src
+    assert "/policies/evaluate" in src
+    # A function export so opencode's Object.values(mod) loader picks it up.
+    assert "export const OmnigentPolicyPlugin" in src
+    # Idempotent overwrite (re-launch ships fresh code, no error).
+    assert write_opencode_policy_plugin(bridge_dir) == path
 
 
 def test_update_last_event_id(bridge_dir: Path) -> None:

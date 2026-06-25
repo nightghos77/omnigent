@@ -61,6 +61,123 @@ _MCP_BRIDGE_CONFIG_FILE = "bridge.json"
 # the elicitation against the Omnigent server (mirrors codex-native's
 # ``policy_hook.json``; consumed by ``omnigent.native_cost_popup``).
 _COST_POPUP_CONFIG_FILE = "cost_popup.json"
+# Filename of the opencode plugin that bridges opencode's lifecycle hooks to the
+# Omnigent policy engine (REQUEST + TOOL_RESULT phases the reactive
+# ``permission.asked`` path can't reach).
+_POLICY_PLUGIN_FILE = "omnigent-policy.js"
+
+# The plugin source. opencode loads it (registered by absolute path in the
+# synthesized ``opencode.json`` ``plugin`` field) and iterates the module's
+# function exports as plugins (legacy shape). It reads its Omnigent coordinates
+# from env the runner stamps on ``opencode serve`` and POSTs each hook to
+# ``/v1/sessions/{id}/policies/evaluate`` — the SAME endpoint + ``PHASE_*``
+# contract claude-native's ``UserPromptSubmit`` / ``PostToolUse`` hooks use.
+# Best-effort: any transport error fails OPEN (never locks the session); only an
+# explicit ``POLICY_ACTION_DENY`` blocks a prompt (throw) or withholds a tool
+# result (redact). Raw string so the JS ``\n`` / regex escapes survive verbatim.
+_OPENCODE_POLICY_PLUGIN_JS = r"""
+// Omnigent policy bridge for opencode-native (generated; do not edit).
+// Forwards opencode lifecycle hooks to the Omnigent policy engine so
+// REQUEST-phase (prompt-submit) and TOOL_RESULT-phase policies enforce — the
+// phases the reactive permission.asked path cannot reach.
+const BASE = (process.env.OMNIGENT_POLICY_URL || "").replace(/\/+$/, "");
+const SESSION = process.env.OMNIGENT_SESSION_ID || "";
+const AUTH = process.env.OMNIGENT_POLICY_AUTH || "";
+const TIMEOUT_MS = 600000;
+
+async function evaluate(type, target, data) {
+  // Not wired (no server/session) -> no-op allow.
+  if (!BASE || !SESSION) return "ALLOW";
+  const url = BASE + "/v1/sessions/" + encodeURIComponent(SESSION) + "/policies/evaluate";
+  const headers = { "content-type": "application/json" };
+  if (AUTH) headers["authorization"] = AUTH;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({ event: { type: type, target: target || "", data: data } }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return "ALLOW";
+    const body = await resp.json();
+    return body && typeof body.result === "string" ? body.result : "ALLOW";
+  } catch (e) {
+    // Server unreachable / timeout: fail OPEN so a transient blip can't lock
+    // the session. The web approval card (if any) stays parked server-side.
+    return "ALLOW";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function joinText(parts) {
+  if (!Array.isArray(parts)) return "";
+  const out = [];
+  for (const p of parts) {
+    if (p && p.type === "text" && typeof p.text === "string") out.push(p.text);
+  }
+  return out.join("\n");
+}
+
+export const OmnigentPolicyPlugin = async () => ({
+  // REQUEST phase: gate the prompt before the model sees it. A DENY throws,
+  // which opencode surfaces as an aborted turn (true block). On a web-injected
+  // prompt the server auto-allows (it was gated at injection), so this only
+  // gates TUI-typed prompts.
+  "chat.message": async (_input, output) => {
+    const text = output ? joinText(output.parts) : "";
+    if (!text) return;
+    const verdict = await evaluate("PHASE_REQUEST", "", text);
+    if (verdict === "POLICY_ACTION_DENY") {
+      throw new Error("Blocked by Omnigent policy (request phase).");
+    }
+  },
+  // TOOL_RESULT phase: gate/redact the tool output before the model sees it.
+  // The tool already ran; a DENY withholds its output (the TOOL_RESULT-phase
+  // suppress semantics) rather than aborting the turn.
+  "tool.execute.after": async (input, output) => {
+    if (!output) return;
+    const verdict = await evaluate(
+      "PHASE_TOOL_RESULT",
+      input && input.tool,
+      { result: output.output },
+    );
+    if (verdict === "POLICY_ACTION_DENY") {
+      output.output = "[Omnigent policy: tool result withheld]";
+    }
+  },
+});
+"""
+
+
+def write_opencode_policy_plugin(bridge_dir: Path) -> Path:
+    """
+    Write the Omnigent policy-bridge plugin into *bridge_dir* and return its path.
+
+    The runner registers the returned path in the synthesized ``opencode.json``
+    ``plugin`` field and stamps ``OMNIGENT_POLICY_URL`` / ``OMNIGENT_SESSION_ID``
+    / ``OMNIGENT_POLICY_AUTH`` on the ``opencode serve`` process so the plugin
+    can reach ``/policies/evaluate``. Overwritten each launch so a code update
+    ships without stale plugin files.
+
+    :param bridge_dir: OpenCode-native bridge directory.
+    :returns: The written plugin file path (absolute).
+    """
+    bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = bridge_dir / _POLICY_PLUGIN_FILE
+    fd, tmp_name = tempfile.mkstemp(prefix=f"{_POLICY_PLUGIN_FILE}.", dir=str(bridge_dir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(_OPENCODE_POLICY_PLUGIN_JS)
+        os.replace(tmp_name, path)
+    finally:
+        if os.path.exists(tmp_name):
+            os.unlink(tmp_name)
+    return path
+
+
 _STATE_VERSION = 1
 _BRIDGE_ROOT = Path.home() / ".omnigent" / "opencode-native"
 _ID_HASH_CHARS = 32
