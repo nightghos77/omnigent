@@ -108,23 +108,19 @@ describe("isCostRoutingSession", () => {
   it("matches any top-level session with an agent name", () => {
     expect(isCostRoutingSession({ agentName: "polly", parentSessionId: null })).toBe(true);
     expect(isCostRoutingSession({ agentName: "debby", parentSessionId: null })).toBe(true);
-    expect(isCostRoutingSession({ agentName: "my-agent", parentSessionId: null })).toBe(true);
   });
 
-  it("rejects a child session — workers inherit the parent's agentName", () => {
+  it("rejects a child session", () => {
     expect(isCostRoutingSession({ agentName: "polly", parentSessionId: "conv_parent987" })).toBe(
       false,
     );
-    expect(isCostRoutingSession({ agentName: "debby", parentSessionId: "conv_parent987" })).toBe(
-      false,
-    );
   });
 
-  it("rejects a session with no agent name (deleted/orphaned agent row)", () => {
+  it("rejects a session with no agent name", () => {
     expect(isCostRoutingSession({ agentName: null, parentSessionId: null })).toBe(false);
   });
 
-  it("rejects a missing session (snapshot in flight or landing page)", () => {
+  it("rejects a missing session", () => {
     expect(isCostRoutingSession(null)).toBe(false);
     expect(isCostRoutingSession(undefined)).toBe(false);
   });

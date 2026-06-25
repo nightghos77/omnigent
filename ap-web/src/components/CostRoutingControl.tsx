@@ -8,17 +8,11 @@ import type { Session } from "@/lib/types";
 export type CostControlMode = "on" | "off" | null;
 
 /**
- * Whether a session should surface the smart-routing control.
+ * Whether a session is eligible for smart routing (top-level, has agent).
  *
- * Smart routing is a server-side feature available to any top-level
- * session (not sub-agents).  Sub-agent (child) sessions are excluded:
- * workers spawned via `sys_session_send` inherit the parent's
- * `agentName`, so `parentSessionId` is the discriminator.
- *
- * @param session The session snapshot (or any subset carrying agent
- *   identity + parent linkage); `null`/`undefined` while loading or
- *   on the landing page.
- * @returns `true` for any top-level (non-child) session with an agent.
+ * Callers must also check ``ServerInfo.smart_routing_enabled`` from
+ * the ``/v1/info`` probe to decide whether to show the toggle — this
+ * predicate only checks the session shape.
  */
 export function isCostRoutingSession(
   session: Pick<Session, "agentName" | "parentSessionId"> | null | undefined,
