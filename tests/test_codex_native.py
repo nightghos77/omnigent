@@ -70,30 +70,58 @@ def test_codex_auth_unavailable_reason_absent_auth_json_needs_auth(
     assert codex_native._codex_auth_unavailable_reason() == "needs-auth"
 
 
-def test_codex_auth_unavailable_reason_valid_unexpired_auth_available(
+def test_codex_auth_unavailable_reason_chatgpt_tokens_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Installed codex with unexpired auth.json is available."""
+    """A real ChatGPT/OAuth auth.json (tokens block) is available.
+
+    Mirrors the openai/codex ``AuthDotJson`` shape: ``auth_mode=chatgpt`` with a
+    ``tokens`` object. There is no top-level expiry field — access-token expiry
+    lives in the JWT and is refreshed via ``refresh_token`` — so presence of the
+    tokens is what marks the credential configured.
+    """
     auth_path = tmp_path / "codex-home" / "auth.json"
     _point_codex_auth_check_at(monkeypatch, auth_path, binary_present=True)
     _write_codex_auth(
         auth_path,
-        {"tokens": {"access_token": "tok", "expires_at": codex_native.time.time() + 3600}},
+        {
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "id_token": "header.payload.sig",
+                "access_token": "header.payload.sig",
+                "refresh_token": "opaque-refresh",
+                "account_id": "org_test",
+            },
+            "last_refresh": "2026-06-25T15:04:05Z",
+        },
     )
 
     assert codex_native._codex_auth_unavailable_reason() is None
 
 
-def test_codex_auth_unavailable_reason_expired_auth_needs_auth(
+def test_codex_auth_unavailable_reason_api_key_available(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Installed codex with expired auth.json reports needs-auth."""
+    """A real API-key auth.json (``auth_mode=api``) is available."""
     auth_path = tmp_path / "codex-home" / "auth.json"
     _point_codex_auth_check_at(monkeypatch, auth_path, binary_present=True)
-    _write_codex_auth(
-        auth_path,
-        {"tokens": {"access_token": "tok", "expires_at": codex_native.time.time() - 1}},
-    )
+    _write_codex_auth(auth_path, {"auth_mode": "api", "OPENAI_API_KEY": "sk-test"})
+
+    assert codex_native._codex_auth_unavailable_reason() is None
+
+
+def test_codex_auth_unavailable_reason_no_credential_needs_auth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A parseable auth.json with no credential field reports needs-auth.
+
+    e.g. a stub that records ``auth_mode`` but carries neither an
+    ``OPENAI_API_KEY`` nor a ``tokens`` block — there is nothing to authenticate
+    with, so the picker should warn rather than show Codex as ready.
+    """
+    auth_path = tmp_path / "codex-home" / "auth.json"
+    _point_codex_auth_check_at(monkeypatch, auth_path, binary_present=True)
+    _write_codex_auth(auth_path, {"auth_mode": "chatgpt"})
 
     assert codex_native._codex_auth_unavailable_reason() == "needs-auth"
 

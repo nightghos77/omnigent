@@ -133,27 +133,32 @@ def _resolve_codex_auth_source() -> _CodexAuthSource:
     return _CodexAuthSource(auth_path=_codex_home_config_source_from_env() / "auth.json")
 
 
-def _codex_expiry_timestamp(value: object) -> float | None:
-    """Parse a Codex auth expiry value into epoch seconds, when possible."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        # Codex-adjacent auth files commonly use either seconds or millis.
-        return float(value) / 1000 if value > 10_000_000_000 else float(value)
-    if isinstance(value, str):
-        stripped = value.strip()
-        if not stripped:
-            return None
-        with contextlib.suppress(ValueError):
-            numeric = float(stripped)
-            return numeric / 1000 if numeric > 10_000_000_000 else numeric
-        with contextlib.suppress(ValueError):
-            return datetime.fromisoformat(stripped.replace("Z", "+00:00")).timestamp()
-    return None
-
-
 def _codex_auth_json_has_available_credential(auth_path: Path) -> bool:
-    """Return whether ``auth.json`` parses and carries an unexpired credential."""
+    """Return whether ``auth.json`` parses and carries a usable credential.
+
+    Presence-based by design. A real Codex ``auth.json`` (see the openai/codex
+    ``AuthDotJson`` shape) is one of:
+
+    * **API-key** auth — a top-level ``OPENAI_API_KEY`` (or a
+      ``personal_access_token`` from ``codex login --with-access-token``).
+    * **ChatGPT / OAuth** auth — a ``tokens`` object holding ``access_token`` /
+      ``refresh_token`` (and an ``id_token``).
+
+    There is intentionally **no expiry judgement**. Codex stores no top-level
+    expiry field; ChatGPT-mode access tokens are short-lived JWTs that Codex
+    silently refreshes via the long-lived ``refresh_token`` (recorded in
+    ``last_refresh``), so an "expired" ``access_token`` is the normal
+    between-refresh state, not a deauth. Whether the ``refresh_token`` itself is
+    still valid is server-side and opaque, so this local-only, side-effect-free
+    check only asks whether a credential is *configured* — not whether it would
+    authenticate. A revoked/truly-expired session can therefore still surface as
+    available and fail at run time; catching that needs a network probe, which
+    is out of scope here.
+
+    :param auth_path: Path to the Codex ``auth.json``.
+    :returns: ``True`` when the file parses and contains a credential field;
+        ``False`` when it is missing, malformed, or carries no credential.
+    """
     try:
         raw = auth_path.read_text(encoding="utf-8")
     except OSError:
@@ -165,31 +170,11 @@ def _codex_auth_json_has_available_credential(auth_path: Path) -> bool:
     if not isinstance(data, dict):
         return False
 
-    credential_containers = [data]
+    for key in ("OPENAI_API_KEY", "personal_access_token"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return True
     tokens = data.get("tokens")
-    if isinstance(tokens, dict):
-        credential_containers.append(tokens)
-
-    expiry_keys = ("expires_at", "expiresAt", "expiry", "expires_on", "expiration")
-    now = time.time()
-    for container in credential_containers:
-        for key in expiry_keys:
-            if key not in container:
-                continue
-            # Absence is allowed: real ChatGPT-login auth.json stores expiry
-            # inside the id_token JWT, which this local-only check intentionally
-            # does not parse. If an explicit expiry key is present but
-            # unparseable, fail closed to needs-auth.
-            timestamp = _codex_expiry_timestamp(container[key])
-            if timestamp is None or timestamp <= now:
-                return False
-
-    api_key = data.get("OPENAI_API_KEY")
-    if isinstance(api_key, str) and api_key.strip():
-        return True
-    personal_access_token = data.get("personal_access_token")
-    if isinstance(personal_access_token, str) and personal_access_token.strip():
-        return True
     if isinstance(tokens, dict):
         for field in ("access_token", "refresh_token"):
             value = tokens.get(field)
@@ -207,8 +192,10 @@ def _codex_auth_unavailable_reason() -> str | None:
     ``codex login``, shells out to a status command, or performs a network probe.
 
     :returns: ``"binary-missing"`` when the CLI is absent, ``"needs-auth"``
-        when the CLI exists but ``auth.json`` is missing, malformed, empty, or
-        expired, and ``None`` when a usable unexpired credential is present.
+        when the CLI exists but ``auth.json`` is missing, malformed, or carries
+        no credential, and ``None`` when a credential is configured. Token
+        *validity* (revoked/expired refresh) is not judged locally — see
+        :func:`_codex_auth_json_has_available_credential`.
     """
     if shutil.which(_DEFAULT_CODEX_COMMAND) is None:
         return _CODEX_AUTH_UNAVAILABLE_BINARY_MISSING
