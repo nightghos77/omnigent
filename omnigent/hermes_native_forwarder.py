@@ -637,7 +637,7 @@ async def forward_hermes_store_to_session(
                         resp.raise_for_status()
                         _external_id_synced = True
                     except httpx.HTTPError:
-                        _logger.debug(
+                        _logger.warning(
                             "hermes forwarder failed to PATCH external_session_id; "
                             "will retry next poll; session=%s",
                             session_id,
