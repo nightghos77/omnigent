@@ -102,15 +102,6 @@ _SKILL_INVOKE_RE = re.compile(
 #: Maximum characters for a tool output mirrored into the web UI chat view.
 #: Longer outputs are truncated so skill loads and other verbose results don't
 #: flood the conversation bubbles. The full output remains visible in the
-#: embedded terminal.
-_TOOL_OUTPUT_MAX_CHARS = 1000
-
-
-def _truncate_tool_output(output: str) -> str:
-    """Truncate *output* if it exceeds :data:`_TOOL_OUTPUT_MAX_CHARS`."""
-    if len(output) <= _TOOL_OUTPUT_MAX_CHARS:
-        return output
-    return output[:_TOOL_OUTPUT_MAX_CHARS] + "\n\n… (truncated)"
 
 
 def _read_model_from_hermes_config(bridge_dir: Path) -> str | None:
@@ -501,7 +492,7 @@ def _message_to_items(
     if role == "tool":
         # Tool result row — emit function_call_output.
         if isinstance(tool_call_id, str) and tool_call_id:
-            output = _truncate_tool_output(text or "")
+            output = text or ""
             return [
                 _MirrorItem(
                     msg_id=msg_id,
