@@ -601,53 +601,97 @@ function followLocalServerMove(event, oldServerUrl, newUrl) {
 }
 
 /**
+ * Show a small, auto-dismissing toast inside the focused window's web page by
+ * injecting a self-contained element — works regardless of the server's SPA
+ * version (old SPAs have no in-app host indicator) and isn't suppressed like a
+ * notification is for the frontmost app, nor as heavy as a modal dialog.
+ *
+ * @param {string} message
+ * @param {"info" | "error"} [kind]
+ */
+function showRunnerToast(message, kind = "info") {
+  const win = activeWindow();
+  if (!win || win.isDestroyed()) return;
+  const arg = JSON.stringify({ message: String(message), error: kind === "error" });
+  // Self-contained IIFE; styled inline so it needs nothing from the page.
+  const js = `(function(o){try{
+    var id="omnigent-runner-toast";var p=document.getElementById(id);if(p)p.remove();
+    var e=document.createElement("div");e.id=id;e.textContent=o.message;
+    e.style.cssText="position:fixed;z-index:2147483647;left:50%;bottom:24px;transform:translateX(-50%);"
+      +"max-width:min(90vw,440px);padding:10px 14px;border-radius:10px;"
+      +"font:13px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif;color:#fff;"
+      +"background:"+(o.error?"rgba(176,42,62,0.97)":"rgba(28,28,32,0.97)")+";"
+      +"box-shadow:0 8px 28px rgba(0,0,0,0.4);opacity:0;transition:opacity .18s ease";
+    document.body.appendChild(e);requestAnimationFrame(function(){e.style.opacity="1"});
+    setTimeout(function(){e.style.opacity="0";setTimeout(function(){e.remove()},250)}, o.error?7000:4000);
+  }catch(_){} })(${arg})`;
+  win.webContents.executeJavaScript(js).catch(() => {});
+}
+
+/**
  * Connect this machine as a host for a server at connect time (the setup page's
  * "Connect this machine as a runner" toggle). Ensures CLI auth first (remote
- * servers), then connects. Failures are surfaced via an OS notification (the
- * only feedback channel that works regardless of the server's SPA version) and
- * logged — never silently swallowed.
+ * servers; may open the browser), then connects. Reports outcome via an in-page
+ * toast — auth failures get a friendly "sign in" message rather than a raw
+ * error — and is logged. Never silently swallowed.
  *
  * @param {string} serverUrl
  * @returns {Promise<void>}
  */
-async function connectHostAtConnectTime(serverUrl) {
+async function connectRunner(serverUrl) {
   const cliPath = resolvedCliPath();
   if (!cliPath) {
-    console.warn("[omnigent] runner connect skipped: omnigent CLI not found");
-    notifyRunnerConnectFailure("The omnigent CLI was not found. Install it or set its path.");
+    showRunnerToast("Omnigent CLI not found — install it or set its path in setup.", "error");
     return;
   }
   const auth = await serverManager.ensureServerAuth(cliPath, serverUrl);
   if (!auth.ok) {
-    console.warn("[omnigent] runner connect:", auth.error);
-    notifyRunnerConnectFailure(auth.error);
+    console.warn("[omnigent] runner connect (auth):", auth.error);
+    showRunnerToast(
+      `Sign in to run this machine as a runner — run \`omnigent login ${serverUrl}\`.`,
+      "error",
+    );
     broadcastHostStatus();
     return;
   }
   const result = await serverManager.ensureHostConnected(cliPath, serverUrl);
-  if (!result.ok) {
-    console.warn("[omnigent] runner connect failed:", result.error);
-    notifyRunnerConnectFailure(result.error);
-  }
   broadcastHostStatus();
+  if (result.ok) {
+    showRunnerToast("This machine is now connected as a runner.", "info");
+    return;
+  }
+  console.warn("[omnigent] runner connect failed:", result.error);
+  showRunnerToast(
+    result.authError
+      ? `Sign in to run this machine as a runner — run \`omnigent login ${serverUrl}\`.`
+      : "Couldn't connect this machine as a runner.",
+    "error",
+  );
 }
 
 /**
- * Surface a runner-connect failure as a native modal dialog. A notification is
- * unreliable here: the OS suppresses the banner for the frontmost app (the user
- * just clicked Connect, so the app IS frontmost), and an old server SPA has no
- * in-app host indicator. A dialog shows regardless of focus or SPA version.
+ * Reconnect this machine as a host on launch when it was host-enabled last
+ * session. Unlike connectRunner this does NOT auto-launch an interactive login
+ * (no surprise browser on startup): it just attempts the connection and, on an
+ * auth failure, shows a gentle toast pointing at the host menu / `omnigent
+ * login` rather than reconnecting forcefully.
  *
- * @param {string | undefined} error
+ * @param {string} serverUrl
+ * @returns {Promise<void>}
  */
-function notifyRunnerConnectFailure(error) {
-  const detail = (error || "").trim() || "This machine could not connect to the server.";
-  void dialog.showMessageBox(activeWindow() ?? undefined, {
-    type: "warning",
-    title: "Couldn't connect this machine as a runner",
-    message: "Couldn't connect this machine as a runner",
-    detail,
-  });
+async function restoreRunner(serverUrl) {
+  const cliPath = resolvedCliPath();
+  if (!cliPath) return;
+  const result = await serverManager.ensureHostConnected(cliPath, serverUrl);
+  broadcastHostStatus();
+  if (result.ok) return;
+  console.warn("[omnigent] runner restore failed:", result.error);
+  showRunnerToast(
+    result.authError
+      ? `Sign in to reconnect this machine as a runner — run \`omnigent login ${serverUrl}\`.`
+      : "Couldn't reconnect this machine as a runner.",
+    "error",
+  );
 }
 
 /**
@@ -1089,12 +1133,7 @@ function createWindow(targetUrl, opts = {}) {
     if (originOf(urlStr) !== state.origin) return;
     hostRestoreAttempted = true;
     if (!isHostServerEnabled(state.serverUrl)) return;
-    const cliPath = resolvedCliPath();
-    if (!cliPath) return;
-    serverManager
-      .ensureHostConnected(cliPath, state.serverUrl)
-      .then(broadcastHostStatus)
-      .catch(() => {});
+    void restoreRunner(state.serverUrl);
   });
 
   win.on("closed", () => {
@@ -1648,7 +1687,7 @@ function registerIpc() {
           // except for ephemeral windows, whose connections are never saved.
           if (host) {
             if (!ephemeral) setHostServerEnabled(target, true);
-            void connectHostAtConnectTime(target);
+            void connectRunner(target);
           }
         })
         .catch(() => {

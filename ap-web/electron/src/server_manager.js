@@ -58,6 +58,21 @@ function onChange(cb) {
   changeListener = typeof cb === "function" ? cb : null;
 }
 
+/**
+ * Heuristically classify a host-connect error as an authentication failure,
+ * from `omnigent host`'s own messages (HostConnectError: "Authentication
+ * failed", "HTTP 401", login-page redirect, or the `omnigent login` hint). Lets
+ * the UI show a friendly "sign in" prompt instead of a scary raw error.
+ *
+ * @param {string | undefined} text
+ * @returns {boolean}
+ */
+function isAuthError(text) {
+  return /authentication failed|http 401|unauthor|login page|omnigent login/i.test(
+    String(text || ""),
+  );
+}
+
 /** Fire the change listener, swallowing listener errors. */
 function emitChange() {
   if (changeListener) {
@@ -200,7 +215,12 @@ async function connectHost(cliPath, serverUrl, key) {
   const spawned = await spawnHostChild(cliPath, serverUrl);
   if (!spawned.ok) {
     if (spawned.child && spawned.child.exitCode === null) spawned.child.kill("SIGTERM");
-    return { ok: false, ownedByDesktop: false, error: spawned.error };
+    return {
+      ok: false,
+      ownedByDesktop: false,
+      error: spawned.error,
+      authError: isAuthError(spawned.error),
+    };
   }
   hostChildren.set(key, { child: spawned.child, serverUrl, log: spawned.holder });
   // Persistent cleanup: drop the entry when this child eventually exits. If the
