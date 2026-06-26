@@ -531,6 +531,7 @@ class _PiNativeLaunchConfig:
     server_url: str
     terminal_launch_args: list[str] | None
     external_session_id: str | None
+    fork_source_id: str | None = None
     fork_source_external_id: str | None = None
     fork_carry_history: bool = False
     model_override: str | None = None
@@ -728,12 +729,17 @@ async def _pi_native_launch_config(
     from omnigent.stores.conversation_store import (
         FORK_CARRY_HISTORY_LABEL_KEY,
         FORK_SOURCE_EXTERNAL_SESSION_LABEL_KEY,
+        FORK_SOURCE_LABEL_KEY,
     )
 
+    fork_source_id: str | None = None
     fork_source_external_id: str | None = None
     fork_carry_history = False
     labels = snapshot.get("labels")
     if isinstance(labels, dict):
+        _fsi = labels.get(FORK_SOURCE_LABEL_KEY)
+        if isinstance(_fsi, str) and _fsi:
+            fork_source_id = _fsi
         _fse = labels.get(FORK_SOURCE_EXTERNAL_SESSION_LABEL_KEY)
         if isinstance(_fse, str) and _fse:
             fork_source_external_id = _fse
@@ -753,6 +759,7 @@ async def _pi_native_launch_config(
         server_url=os.environ.get("RUNNER_SERVER_URL", "http://localhost:6767").rstrip("/"),
         terminal_launch_args=terminal_launch_args,
         external_session_id=external_session_id,
+        fork_source_id=fork_source_id,
         fork_source_external_id=fork_source_external_id,
         fork_carry_history=fork_carry_history,
         model_override=model_override,
@@ -2407,14 +2414,49 @@ async def _auto_create_hermes_terminal(
     # cursor (clear_hermes_bridge_state above) starts it at that row's first row.
     launch_epoch_s = time.time()
     hermes_args = [*(launch_config.terminal_launch_args or [])]
-    # Fork with history: resume the source Hermes session so the TUI
-    # loads the prior conversation context.
+    # Resolve the per-session HERMES_HOME early: the fork block below needs it
+    # to place the cloned state.db, and the env block after needs it for the
+    # HERMES_HOME env var.
+    _hermes_home_path = read_hermes_home(bridge_dir)
+    # Fork with history: clone the source Hermes session's state.db into the
+    # new session's HERMES_HOME so the TUI loads the prior conversation context
+    # under a fresh session id (true fork, not a shared --resume).
     if launch_config.fork_carry_history and launch_config.fork_source_external_id:
-        hermes_args.extend(["--resume", launch_config.fork_source_external_id])
+        from omnigent.hermes_native_bridge import (
+            clone_hermes_session,
+            mint_hermes_session_id,
+        )
+
+        # Resolve the source session's state.db from its bridge dir.
+        _source_bridge = (
+            bridge_dir_for_session_id(launch_config.fork_source_id)
+            if launch_config.fork_source_id
+            else None
+        )
+        _source_hermes_home = read_hermes_home(_source_bridge) if _source_bridge else None
+        _source_db = _source_hermes_home / "state.db" if _source_hermes_home else None
+        if _source_db is not None and _source_db.is_file():
+            _target_session_id = mint_hermes_session_id()
+            _target_db = _hermes_home_path / "state.db" if _hermes_home_path else None
+            if _target_db is not None:
+                await asyncio.to_thread(
+                    clone_hermes_session,
+                    _source_db,
+                    _target_db,
+                    launch_config.fork_source_external_id,
+                    _target_session_id,
+                    workspace=workspace,
+                )
+                hermes_args.extend(["--resume", _target_session_id])
+                _logger.info(
+                    "Cloned hermes session %s -> %s for fork; session=%s",
+                    launch_config.fork_source_external_id,
+                    _target_session_id,
+                    session_id,
+                )
     # If a per-session HERMES_HOME was written (policy hook), pass it via env
     # so the TUI picks up the hook config alongside its own approval prompt.
     _hermes_terminal_env: dict[str, str] = {}
-    _hermes_home_path = read_hermes_home(bridge_dir)
     if _hermes_home_path is not None:
         _hermes_terminal_env["HERMES_HOME"] = str(_hermes_home_path)
     terminal_view = await resource_registry.launch_required_terminal(
@@ -4955,25 +4997,35 @@ async def _auto_create_claude_terminal(
         agent_name,
         skills_filter,
     )
-    # prepare_bridge_dir uses session_id as the bridge_id (no explicit
-    # bridge_id passed), so the bridge dir is keyed by session_id.  If the
-    # Omnigent session carries a stale bridge_id label from a prior rotation that
-    # timed out before the terminal transfer completed, _ensure_comment_relay_started
-    # would read the label and write tool_relay.json to the wrong directory —
-    # the bridge subprocess would never see it and the relay tools would be absent.
-    # Correcting the label here ensures all subsequent label lookups return
-    # session_id, which matches the actual bridge dir.
+    # Pick the bridge id this session's dir is keyed on. Normally session_id,
+    # and we (re)assert the label = session_id so a STALE label from a rotation
+    # that timed out before its terminal transfer can't make
+    # _ensure_comment_relay_started write tool_relay.json to the wrong dir.
+    #
+    # EXCEPTION: a session superseded by /clear is deliberately re-keyed to
+    # "{session_id}-cleared" (see _create_clear_replacement_session). Its natural
+    # D(session_id) is the NEW session's live pane; resuming there would share
+    # one transcript with two forwarders (duplicate items) and trip the
+    # "no longer active after /clear" guard. So when the label is exactly that
+    # marker, honour it and resume in the session's own isolated dir. The
+    # executor spawn_env already resolves the same label, so the two agree.
+    cleared_bridge_id = f"{session_id}-cleared"
+    existing_bridge_id = await _claude_native_bridge_id_for_session(
+        server_client=server_client,
+        session_id=session_id,
+    )
+    bridge_id = cleared_bridge_id if existing_bridge_id == cleared_bridge_id else session_id
     try:
         await server_client.patch(
             f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}",
-            json={"labels": {BRIDGE_ID_LABEL_KEY: session_id}},
+            json={"labels": {BRIDGE_ID_LABEL_KEY: bridge_id}},
         )
     except httpx.HTTPError:
         _logger.debug(
-            "Could not reset bridge_id label for %s; relay may target wrong dir",
+            "Could not set bridge_id label for %s; relay may target wrong dir",
             session_id,
         )
-    bridge_dir = prepare_bridge_dir(session_id, workspace=Path(workspace))
+    bridge_dir = prepare_bridge_dir(session_id, bridge_id=bridge_id, workspace=Path(workspace))
     # Cancel any surviving forwarder BEFORE wiping its cursor/seen state, else it
     # re-posts with fresh dedup state alongside the forwarder spawned below.
     await _cancel_auto_forwarder_task(session_id)
@@ -5413,18 +5465,19 @@ async def _auto_create_claude_terminal(
     _publish_tmux_target_for_bridge(
         resource_registry=resource_registry,
         session_id=session_id,
-        # The bridge dir was created via ``prepare_bridge_dir(session_id)``
-        # above (no explicit bridge_id), so it is keyed by session_id.
-        # Pass the same id so the tmux target lands in that dir and the
-        # claude-native harness can find it.
-        bridge_id=session_id,
+        # Use the SAME bridge id the dir was prepared under (``bridge_id``,
+        # which is the "-cleared" fork for a /clear-superseded resume, else
+        # session_id). Hardcoding session_id here would write tmux.json into
+        # D(session_id) while the executor + forwarder read D(bridge_id) — the
+        # "tmux target not advertised yet" mismatch on a resumed old session.
+        bridge_id=bridge_id,
         terminal_name="claude",
         session_key="main",
     )
     _logger.info(
         "Claude terminal tmux target published: session=%s bridge_id=%s",
         session_id,
-        session_id,
+        bridge_id,
     )
 
     # Start the transcript forwarder so Claude's responses flow
