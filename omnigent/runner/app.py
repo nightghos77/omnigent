@@ -4148,6 +4148,64 @@ def _ensure_orchestrator_skills_in_bundle(
         )
 
 
+async def _resolve_claude_resume_bridge_id(
+    *,
+    server_client: httpx.AsyncClient,
+    session_id: str,
+) -> str:
+    """
+    Choose the bridge id a (re)started claude-native session should use.
+
+    Normally a session owns ``D(session_id)`` and this returns ``session_id``.
+    But after a ``/clear`` or ``/fork``, the rotation hands the live terminal to
+    the NEW session and leaves ``D(session_id)``'s on-disk ``active_session_id``
+    pointing at that sibling. When a host relaunch then resumes THIS (old)
+    session in a SEPARATE runner process, reusing ``D(session_id)`` would put a
+    second forwarder on the live transcript the sibling already mirrors — every
+    conversation item double-posts (external items have no server-side dedup) —
+    and the executor guard would reject the turn ("session no longer active
+    after /clear"). Per-process forwarder registries can't prevent this: the
+    sibling's forwarder lives in another process.
+
+    So when ``D(session_id)`` is owned by a live sibling, return an isolated
+    bridge id: reuse the dir a prior resume already forked (named by the
+    session's current ``bridge_id`` label) when that dir is free or already
+    ours, so repeated resumes converge; otherwise mint a fresh, unique id. The
+    decision is driven entirely by the on-disk ``active_session_id``, which is
+    visible across runner processes (unlike the in-memory registries).
+
+    :param server_client: Omnigent server client, used only on the collision
+        path to resolve the session's current ``bridge_id`` label.
+    :param session_id: The session being (re)started, e.g. ``"conv_old"``.
+    :returns: The bridge id to key this session's bridge dir on — ``session_id``
+        in the common case, otherwise an isolated ``f"{session_id}-clr-…"``
+        (or a previously-forked id when reusable).
+    """
+    import secrets
+
+    from omnigent.claude_native_bridge import (
+        bridge_dir_for_bridge_id,
+        read_active_session_id,
+    )
+
+    natural_active = read_active_session_id(bridge_dir_for_bridge_id(session_id))
+    if natural_active is None or natural_active == session_id:
+        # Free, fresh, or a plain reconnect to our own bridge — no rotation
+        # sibling owns it, so keep the natural (session_id) bridge.
+        return session_id
+    prior_label = await _claude_native_bridge_id_for_session(
+        server_client=server_client,
+        session_id=session_id,
+    )
+    if prior_label != session_id:
+        prior_active = read_active_session_id(bridge_dir_for_bridge_id(prior_label))
+        if prior_active is None or prior_active == session_id:
+            # A prior resume already forked this session onto its own dir and it
+            # is still free/ours — reuse it so repeated resumes don't leak dirs.
+            return prior_label
+    return f"{session_id}-clr-{secrets.token_hex(4)}"
+
+
 async def _auto_create_claude_terminal(
     session_id: str,
     resource_registry: SessionResourceRegistry,
@@ -4219,25 +4277,37 @@ async def _auto_create_claude_terminal(
         agent_name,
         skills_filter,
     )
-    # prepare_bridge_dir uses session_id as the bridge_id (no explicit
-    # bridge_id passed), so the bridge dir is keyed by session_id.  If the
-    # Omnigent session carries a stale bridge_id label from a prior rotation that
-    # timed out before the terminal transfer completed, _ensure_comment_relay_started
-    # would read the label and write tool_relay.json to the wrong directory —
-    # the bridge subprocess would never see it and the relay tools would be absent.
-    # Correcting the label here ensures all subsequent label lookups return
-    # session_id, which matches the actual bridge dir.
+    # Pick the bridge dir for this session. Normally D(session_id); after a
+    # /clear or /fork rotation the old session must fork to an isolated dir so
+    # its resume doesn't double-mirror the sibling's live transcript. See
+    # _resolve_claude_resume_bridge_id. We then (re)assert the bridge_id label =
+    # the chosen id so all subsequent lookups (_ensure_comment_relay_started,
+    # the message path, the forwarder) agree with the actual bridge dir — and to
+    # repair a stale label from a rotation that timed out before transfer.
+    chosen_bridge_id = await _resolve_claude_resume_bridge_id(
+        server_client=server_client,
+        session_id=session_id,
+    )
+    if chosen_bridge_id != session_id:
+        _logger.info(
+            "Claude terminal bridge for %s isolated to bridge_id=%s "
+            "(natural dir owned by a live sibling after /clear or /fork)",
+            session_id,
+            chosen_bridge_id,
+        )
     try:
         await server_client.patch(
             f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}",
-            json={"labels": {BRIDGE_ID_LABEL_KEY: session_id}},
+            json={"labels": {BRIDGE_ID_LABEL_KEY: chosen_bridge_id}},
         )
     except httpx.HTTPError:
         _logger.debug(
-            "Could not reset bridge_id label for %s; relay may target wrong dir",
+            "Could not set bridge_id label for %s; relay may target wrong dir",
             session_id,
         )
-    bridge_dir = prepare_bridge_dir(session_id, workspace=Path(workspace))
+    bridge_dir = prepare_bridge_dir(
+        session_id, bridge_id=chosen_bridge_id, workspace=Path(workspace)
+    )
     # Cancel any surviving forwarder BEFORE wiping its cursor/seen state, else it
     # re-posts with fresh dedup state alongside the forwarder spawned below.
     await _cancel_auto_forwarder_task(session_id)
