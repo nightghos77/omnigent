@@ -541,6 +541,13 @@ def _fetch_server_version(server_url: str | None) -> str | None:
     the version row. A welcome-banner detail must never block or fail REPL
     boot, so this swallows every error.
 
+    The timeout is kept tight and bounded *per phase* (connect / read /
+    write each 1.0s) so the worst case a healthy-but-slow or unreachable
+    server can add to the previously-instant banner stays small — the
+    connect phase, the dominant cost for an unreachable host, fails within
+    a second rather than the multi-second ceiling a single coarse timeout
+    could reach.
+
     :param server_url: Base URL the REPL is connected to, e.g.
         ``"https://omnigent.example.com"``; falsy short-circuits to
         ``None``.
@@ -552,7 +559,7 @@ def _fetch_server_version(server_url: str | None) -> str | None:
     try:
         import httpx
 
-        resp = httpx.get(f"{server_url.rstrip('/')}/v1/info", timeout=2.0)
+        resp = httpx.get(f"{server_url.rstrip('/')}/v1/info", timeout=httpx.Timeout(1.0))
         version = resp.json().get("server_version")
     except Exception:  # noqa: BLE001 — startup-UI boundary: never block boot on a banner detail
         return None
@@ -4272,9 +4279,16 @@ async def run_repl(
             except Exception:  # noqa: BLE001 — startup-UI boundary: a config read must never block REPL boot
                 _log.exception("Failed to build startup header; falling back to plain banner")
         # Installed server version for the header's "server <ver>" row.
-        # Resolved off the event loop (a 2s-timeout GET /v1/info) so a slow
-        # probe never stalls boot; None on any failure simply omits the row.
-        server_version = await asyncio.to_thread(_fetch_server_version, server_url)
+        # Resolved off the event loop (a short-timeout GET /v1/info) so a
+        # slow probe never stalls boot; None on any failure simply omits the
+        # row. Only the header path renders the version, so skip the probe
+        # entirely on the minimal-banner fallback (no header) — no point
+        # paying even bounded latency for a value that won't be shown.
+        server_version = (
+            await asyncio.to_thread(_fetch_server_version, server_url)
+            if _header is not None
+            else None
+        )
         _sys.stdout.write(
             _render_startup_banner_ansi(
                 ui_name,
