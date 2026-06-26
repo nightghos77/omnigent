@@ -92,6 +92,17 @@ def _warn_sqlite_once(context: str, exc: sqlite3.Error) -> None:
 # an internal bridge detail).
 _ATTACHMENT_MARKER_RE = re.compile(r"\[Attached:[^\]]*\]")
 
+# Tool outputs longer than this are truncated in the web UI mirror.
+# The full output is always visible in the embedded terminal.
+_TOOL_OUTPUT_MAX_CHARS = 1000
+
+
+def _truncate_tool_output(output: str) -> str:
+    """Truncate long tool outputs for the web UI mirror."""
+    if len(output) <= _TOOL_OUTPUT_MAX_CHARS:
+        return output
+    return output[:_TOOL_OUTPUT_MAX_CHARS] + "\n\n… (truncated)"
+
 
 def _read_model_from_hermes_config(bridge_dir: Path) -> str | None:
     """Best-effort read of the model name from the per-session HERMES_HOME config.
@@ -476,7 +487,7 @@ def _message_to_items(
     if role == "tool":
         # Tool result row — emit function_call_output.
         if isinstance(tool_call_id, str) and tool_call_id:
-            output = text or ""
+            output = _truncate_tool_output(text or "")
             return [
                 _MirrorItem(
                     msg_id=msg_id,
