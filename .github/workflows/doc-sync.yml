@@ -561,11 +561,12 @@ jobs:
           BRANCH="auto/docs/pr-${PR_NUMBER}"
           git config user.name  "omnigent-ci[bot]"
           git config user.email "294685417+omnigent-ci[bot]@users.noreply.github.com"
-          # Credentials are NOT persisted in .git/config (so the drafter couldn't
-          # read them); authenticate the push with an inline bearer header instead
-          # of embedding the token in the remote URL. Reads (ls-remote/fetch) need
-          # no auth — omnigent-site is public.
-          AUTH=(-c "http.extraheader=AUTHORIZATION: bearer ${SITE_TOKEN}")
+          # Credentials are NOT persisted in .git/config (so the unsandboxed drafter
+          # couldn't read them); the App token is minted only now (after the drafter)
+          # and used solely for the push URL below. GitHub registers it as a masked
+          # secret, so it's redacted from logs. Reads (ls-remote/fetch) need no auth —
+          # omnigent-site is public.
+          PUSH_URL="https://x-access-token:${SITE_TOKEN}@github.com/${SITE_REPO_SLUG}.git"
 
           # Don't clobber human edits: if the rolling branch already exists with a
           # HEAD commit by someone other than the bot, leave it as-is.
@@ -586,7 +587,7 @@ jobs:
           git commit -m "docs: document ${CODE_REPO}#${PR_NUMBER}"
           # --force is safe here: the guard above ensured the branch carries only
           # bot commits.
-          git "${AUTH[@]}" push --force origin "$BRANCH"
+          git push --force "$PUSH_URL" "$BRANCH"
 
           REVIEWER_ARG=()
           [ -n "${REVIEWER}" ] && REVIEWER_ARG=(--reviewer "${REVIEWER}")
