@@ -3753,7 +3753,19 @@ export function handleSessionEvent(event: StreamEvent): void {
       useChatStore.setState((s) => {
         if (s.conversationId !== event.conversationId) return {};
         if (event.targetConversationId === s.conversationId) return {};
-        return { redirectToConversationId: event.targetConversationId };
+        // The rotation happened mid-input: the `/clear` (or whatever the
+        // user just sent) never gets a `session.input.consumed` on THIS
+        // conversation — the runner moved to the new one — so its optimistic
+        // user bubble would otherwise spin forever. Drop the superseded
+        // conversation's pending bubbles (live view + the navigate-back
+        // stash) since the turn is over; resuming starts a fresh one.
+        const pendingByConversation = { ...s.pendingByConversation };
+        delete pendingByConversation[event.conversationId];
+        return {
+          redirectToConversationId: event.targetConversationId,
+          pendingUserMessages: [],
+          pendingByConversation,
+        };
       });
       return;
     case "session_resource_created":

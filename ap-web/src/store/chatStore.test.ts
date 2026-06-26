@@ -2706,6 +2706,36 @@ describe("chatStore — handleSessionEvent (session.* events)", () => {
       expect(useChatStore.getState().redirectToConversationId).toBe("conv_new");
     });
 
+    it("clears the superseded conversation's lingering optimistic bubble", () => {
+      useChatStore.setState({
+        conversationId: "conv_old",
+        redirectToConversationId: null,
+        pendingUserMessages: [
+          { tempId: "pend_clear", content: [{ type: "input_text", text: "/clear" }] },
+        ],
+        pendingByConversation: {
+          conv_old: {
+            messages: [
+              { tempId: "pend_clear", content: [{ type: "input_text", text: "/clear" }] },
+            ],
+            committedTexts: [],
+          },
+        },
+      });
+      handleSessionEvent({
+        type: "session_superseded",
+        conversationId: "conv_old",
+        targetConversationId: "conv_new",
+        reason: "clear",
+      });
+      const state = useChatStore.getState();
+      // The `/clear` never gets a session.input.consumed on conv_old (the
+      // runner rotated away), so its bubble must be dropped here rather than
+      // spinning forever — both the live list and the navigate-back stash.
+      expect(state.pendingUserMessages).toEqual([]);
+      expect(state.pendingByConversation.conv_old).toBeUndefined();
+    });
+
     it("ignores a superseded frame from a switched-away conversation", () => {
       useChatStore.setState({ conversationId: "conv_current", redirectToConversationId: null });
       handleSessionEvent({
