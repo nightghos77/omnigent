@@ -136,6 +136,17 @@ describe("matchesServer", () => {
     assert.equal(matchesServer({ target: "https://x.com" }, "https://x.com/"), true);
   });
 
+  it("matches a local-mode daemon by its resolved_server_url", () => {
+    // target "local", server_url null — only resolved_server_url has the URL.
+    assert.equal(
+      matchesServer(
+        { target: "local", server_url: null, resolved_server_url: "http://127.0.0.1:6767" },
+        "http://127.0.0.1:6767/",
+      ),
+      true,
+    );
+  });
+
   it("does not match a different server", () => {
     assert.equal(matchesServer({ server_url: "https://y.com" }, "https://x.com"), false);
   });

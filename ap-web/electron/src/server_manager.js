@@ -73,6 +73,18 @@ function isAuthError(text) {
   );
 }
 
+/**
+ * True when `omnigent host` refused to start because a daemon already serves
+ * this target — which means a host is in fact already connected, so we can
+ * adopt it instead of treating the conflict as a failure.
+ *
+ * @param {string | undefined} text
+ * @returns {boolean}
+ */
+function isDaemonConflict(text) {
+  return /already running for this server|host daemon is already running/i.test(String(text || ""));
+}
+
 /** Fire the change listener, swallowing listener errors. */
 function emitChange() {
   if (changeListener) {
@@ -205,7 +217,10 @@ async function ensureHostConnected(cliPath, serverUrl) {
  * @returns {Promise<{ ok: boolean, ownedByDesktop: boolean, adopted?: boolean, error?: string }>}
  */
 async function connectHost(cliPath, serverUrl, key) {
-  const status = await cli.getHostStatus(cliPath, serverUrl);
+  // Query ALL daemons (no --server filter) so a local-mode daemon — whose
+  // loopback URL is only its resolved_server_url — is seen too, and adopt it
+  // rather than spawning a duplicate.
+  const status = await cli.getHostStatus(cliPath);
   const conn = cli.connectionFromStatus(status, serverUrl);
   if (conn.process === "online") {
     // A daemon is already up for this target — adopt rather than spawn.
@@ -215,6 +230,12 @@ async function connectHost(cliPath, serverUrl, key) {
   const spawned = await spawnHostChild(cliPath, serverUrl);
   if (!spawned.ok) {
     if (spawned.child && spawned.child.exitCode === null) spawned.child.kill("SIGTERM");
+    // The CLI refuses to start a second daemon for a target already served by
+    // one (e.g. a local-mode daemon our pre-check couldn't match). That means a
+    // host is in fact already connected — adopt it rather than report failure.
+    if (isDaemonConflict(spawned.error)) {
+      return { ok: true, ownedByDesktop: false, adopted: true };
+    }
     return {
       ok: false,
       ownedByDesktop: false,
@@ -480,7 +501,9 @@ async function statusFor(cliPath, serverUrl) {
       error: null,
     };
   }
-  const status = await cli.getHostStatus(cliPath, serverUrl);
+  // Query all daemons (no --server filter) so a local-mode daemon serving this
+  // loopback URL (matched via resolved_server_url) is recognized too.
+  const status = await cli.getHostStatus(cliPath);
   const conn = cli.connectionFromStatus(status, serverUrl);
   return {
     cliInstalled: true,

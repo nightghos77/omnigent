@@ -542,8 +542,11 @@ async function stopHost(cliPath, serverUrl) {
 }
 
 /**
- * True when a daemon record refers to the given server URL, comparing both its
- * `server_url` and `target` fields after trailing-slash normalization.
+ * True when a daemon record refers to the given server URL. Compares its
+ * `server_url`, `target`, AND `resolved_server_url` (after trailing-slash
+ * normalization) — the last matters for a local-mode daemon (target `"local"`,
+ * server_url null) whose loopback URL only appears as `resolved_server_url`, so
+ * connecting by that loopback URL still recognizes it.
  *
  * @param {Record<string, unknown>} daemon One entry from the daemons array.
  * @param {string} serverUrl
@@ -554,7 +557,9 @@ function matchesServer(daemon, serverUrl) {
   const want = normalizeServerUrl(serverUrl);
   if (want === "") return false;
   return (
-    normalizeServerUrl(daemon.server_url) === want || normalizeServerUrl(daemon.target) === want
+    normalizeServerUrl(daemon.server_url) === want ||
+    normalizeServerUrl(daemon.target) === want ||
+    normalizeServerUrl(daemon.resolved_server_url) === want
   );
 }
 
