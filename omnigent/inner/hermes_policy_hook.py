@@ -71,11 +71,14 @@ def main() -> None:
     url = f"{server_url.rstrip('/')}/v1/sessions/{session_id}/policies/evaluate"
 
     try:
-        from omnigent.native_policy_hook import post_evaluate_with_retry
+        from omnigent.native_policy_hook import (
+            policy_hook_request_headers,
+            post_evaluate_with_retry,
+        )
 
         resp = post_evaluate_with_retry(
             url=url,
-            headers={"Content-Type": "application/json"},
+            headers=policy_hook_request_headers(),
             eval_request=eval_body,
             # One day — must match the server's ``ask_timeout`` so the hook
             # stays alive while the human responds to the web-UI approval card.
