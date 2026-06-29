@@ -31,11 +31,11 @@ _logger = logging.getLogger(__name__)
 
 # Dead-letter sink for permanently-undeliverable forward payloads (#1120).
 _DEAD_LETTER_FILE = "dead_letter.jsonl"
-_DEAD_LETTER_MAX_BYTES = 50 * 1024 * 1024  # 50 MB per session; write-only recovery artifact
-
-# Bridge-dir paths whose dead-letter file has hit the size cap and already
-# logged a warning — so the cap is logged once per path, not per dropped item.
-_dead_letter_capped: set[str] = set()
+# When the active file reaches this size it is rotated to a single ``.1``
+# backup and a fresh file is started, so the most recent drops are always
+# retained (keep-newest). Disk stays bounded at ~2x this size (current + .1).
+_DEAD_LETTER_MAX_BYTES = 50 * 1024 * 1024  # 50 MB per session
+_DEAD_LETTER_BACKUP_FILE = _DEAD_LETTER_FILE + ".1"
 
 
 def append_dead_letter(
@@ -51,8 +51,10 @@ def append_dead_letter(
 
     Write-only recovery artifact so a permanently-failed transcript/usage POST is
     recoverable on disk instead of silently lost. Replay is tracked separately (#1579).
-    Best-effort: never raises (a dead-letter failure must not disrupt forwarding), and
-    stops appending once the file exceeds :data:`_DEAD_LETTER_MAX_BYTES` (logs once per path).
+    Best-effort: never raises (a dead-letter failure must not disrupt forwarding). When
+    the file reaches :data:`_DEAD_LETTER_MAX_BYTES` it is rotated to a single ``.1``
+    backup and a fresh file is started, so the most recent drops are kept (the oldest
+    rotate out); disk stays bounded at ~2x the cap.
 
     :param bridge_dir: Native forwarder bridge directory the dead-letter file lives in.
     :param session_id: Omnigent conversation id the dropped event targeted,
@@ -66,18 +68,19 @@ def append_dead_letter(
     """
     try:
         path = bridge_dir / _DEAD_LETTER_FILE
-        capped_path = str(path)
-        if path.exists() and path.stat().st_size >= _DEAD_LETTER_MAX_BYTES:
-            if capped_path not in _dead_letter_capped:
-                _dead_letter_capped.add(capped_path)
-                _logger.warning(
-                    "dead-letter file at cap (%d bytes); not appending further "
-                    "undeliverable forwards: path=%s",
-                    _DEAD_LETTER_MAX_BYTES,
-                    path,
-                )
-            return
         bridge_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Keep-newest: at the cap, rotate the full file to a single .1 backup
+        # (overwriting any prior backup) and start fresh. A sustained outage
+        # then retains the most recent items rather than stopping at the oldest.
+        if path.exists() and path.stat().st_size >= _DEAD_LETTER_MAX_BYTES:
+            path.replace(bridge_dir / _DEAD_LETTER_BACKUP_FILE)
+            _logger.warning(
+                "dead-letter file reached cap (%d bytes); rotated to %s and "
+                "started fresh (oldest dead-lettered forwards dropped): path=%s",
+                _DEAD_LETTER_MAX_BYTES,
+                _DEAD_LETTER_BACKUP_FILE,
+                path,
+            )
         line = json.dumps(
             {
                 "ts": time.time(),

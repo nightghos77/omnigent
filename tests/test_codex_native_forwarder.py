@@ -1487,3 +1487,46 @@ async def test_post_session_event_does_not_dead_letter_ephemeral_event(
         fwd._reset_forward_health()
 
     assert not (tmp_path / "dead_letter.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_post_session_event_dead_letters_usage_on_permanent_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    A permanently-failed ``external_session_usage`` event is dead-lettered (#1120).
+
+    Usage is the other durable type alongside conversation items, so its
+    transcript/usage data must also be recoverable on a sustained outage.
+
+    :param tmp_path: Pytest temp dir standing in for the bridge dir.
+    :param monkeypatch: Pytest patcher (auto-restores the stubbed inner).
+    """
+    import json as _json
+
+    fwd._reset_forward_health()
+
+    async def _failing_inner(client, session_id, *, event_type, data):
+        return httpx.Response(500, request=httpx.Request("POST", "http://test"))
+
+    monkeypatch.setattr(fwd, "_post_session_event_inner", _failing_inner)
+    token = fwd._dead_letter_dir.set(tmp_path)
+    try:
+        data = {"context_tokens": 1234, "model": "databricks-claude-opus-4-7"}
+        await fwd._post_session_event(
+            MagicMock(),
+            "conv_codex_usage",
+            event_type="external_session_usage",
+            data=data,
+        )
+    finally:
+        fwd._dead_letter_dir.reset(token)
+        fwd._reset_forward_health()
+
+    dl_path = tmp_path / "dead_letter.jsonl"
+    lines = dl_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = _json.loads(lines[0])
+    assert record["session_id"] == "conv_codex_usage"
+    assert record["event_type"] == "external_session_usage"
+    assert record["payload"] == data

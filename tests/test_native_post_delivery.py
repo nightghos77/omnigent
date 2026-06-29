@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from omnigent import _native_post_delivery
 from omnigent._native_post_delivery import (
+    _DEAD_LETTER_BACKUP_FILE,
     _DEAD_LETTER_FILE,
     _DEAD_LETTER_MAX_BYTES,
     append_dead_letter,
@@ -97,20 +97,22 @@ def test_append_dead_letter_writes_parseable_line(tmp_path: Path) -> None:
     assert isinstance(record["ts"], (int, float))
 
 
-def test_append_dead_letter_respects_size_cap(tmp_path: Path) -> None:
+def test_append_dead_letter_rotates_at_cap_keeping_newest(tmp_path: Path) -> None:
     """
-    A file already at/over the cap is not appended to (write-only artifact).
+    At the cap the file rotates to a ``.1`` backup and keeps the newest item.
+
+    A sustained outage must retain the most recent drops, not stop at the
+    oldest: the full file moves to ``dead_letter.jsonl.1`` and the new record
+    lands in a fresh ``dead_letter.jsonl``.
 
     :param tmp_path: Pytest temp dir standing in for a bridge dir.
     """
     dl_path = tmp_path / _DEAD_LETTER_FILE
+    backup_path = tmp_path / _DEAD_LETTER_BACKUP_FILE
     # Use a sparse file (truncate) to reach the cap without writing 50 MB.
     with dl_path.open("wb") as fh:
         fh.truncate(_DEAD_LETTER_MAX_BYTES + 1)
-    size_before = dl_path.stat().st_size
-
-    # Clear any latched cap warning for this path so the cap branch is exercised.
-    _native_post_delivery._dead_letter_capped.discard(str(dl_path))
+    capped_size = dl_path.stat().st_size
 
     append_dead_letter(
         tmp_path,
@@ -120,7 +122,14 @@ def test_append_dead_letter_respects_size_cap(tmp_path: Path) -> None:
         reason="post failed",
     )
 
-    assert dl_path.stat().st_size == size_before
+    # Old content rotated out to the backup; the newest record is in the
+    # fresh active file as the sole line.
+    assert backup_path.stat().st_size == capped_size
+    lines = dl_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["event_type"] == "external_session_usage"
+    assert record["payload"] == {"context_tokens": 1}
 
 
 def test_append_dead_letter_never_raises_on_unwritable_dir() -> None:
