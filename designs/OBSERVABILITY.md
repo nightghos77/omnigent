@@ -296,7 +296,37 @@ All standard OpenTelemetry env vars; nothing backend-specific in code.
 
 ---
 
-## 9. Two layers: spans vs. durable event log
+## 9. Payload capture: metadata always, bodies on request
+
+By default a span records the **shape and metadata** of a message — route, method,
+status, latency, the frame *kind*, the policy *decision* — but **not the body**. That is
+the right default: bodies hold PII/secrets, the trace backend is not a payload store, and
+the HTTP/WS auto-instrumentors never record bodies.
+
+When an operator needs to see the literal contents flowing between services, set
+`OMNIGENT_OTEL_CAPTURE_CONTENT=true`. This wires `should_capture_content()` (previously a
+dormant flag) into the boundaries Omnigent controls:
+
+- **Host-tunnel frames** — inbound on the consumer span (`consume_frame_span`) and
+  outbound at `encode_host_frame`; recorded as `omnigent.message.payload`.
+- **Session-updates WS frames** — outbound at `_send`, inbound at the `watch` consumer
+  span.
+- **Policy evaluation** — the content under evaluation, as `policy.content` on the
+  `policy.evaluate` span.
+
+Every captured body is **redacted** (`_redact_payload`: keys matching
+`token`/`secret`/`password`/`authorization`/`credential`/`api_key` become `[redacted]`,
+and `traceparent`/`tracestate` are dropped) and **length-capped** at
+`_CONTENT_MAX_LEN` (4096 chars). Verified live: a `host.stat` frame span carries its full
+result body and `policy.evaluate` carries the evaluated prompt, with a frame's
+`binding_token` redacted.
+
+**Intentionally NOT captured at the transport:** raw HTTP request/response bodies and SSE
+event frames between server ↔ runner ↔ harness. Reading those in an instrumentation hook
+would consume the stream and break SSE (the live chat transport), and that agent-turn
+content is the **chat-log / durable event log** concern below — not the trace layer.
+
+### Two layers: spans vs. durable event log
 
 Spans are sampled and retention-limited — great for "follow one request," wrong for the
 system-of-record. Questions like transcript reconstruction, fork/resume, and
@@ -336,6 +366,27 @@ a local server+runner, and asserts: (a) all spans share one `trace_id`; (b) expe
 service names and span kinds are present; (c) parent/child links cross each boundary
 (no orphaned local roots). No Jaeger needed in CI — the in-memory exporter is the
 official OTel test harness.
+
+### 10.4 Verification results (local Jaeger, real turn)
+
+A headless turn (`omnigent run --harness claude-sdk -p "…"`) against a local Jaeger
+all-in-one produced the expected connected traces:
+
+- **Agent turn — one trace, 54 spans across three processes**
+  (`service.name` ∈ {`omni-server`, `omni-runner`, `omni-harness`}): server FastAPI +
+  httpx spans, the tunnel-forwarded runner spans, and the harness turn-event spans all
+  share one `trace_id`. Confirms httpx-inject → FastAPI-extract propagation across the
+  server → runner (WS tunnel, verbatim headers) → harness (UDS) boundaries. The server's
+  `policy.evaluate` span and the native policy HTTP hook appear inline.
+- **Host control plane — one trace across `omni-host` + `omni-server`**: the daemon's
+  `host.launch_runner` / `host.stat` consumer spans nest under the server's
+  `POST /v1/hosts/{host_id}/runners` request — confirms the manual JSON-frame
+  `traceparent` propagation (§6.4) with a real daemon.
+- **Per-component `service.name`** distinguishes all four processes in the backend.
+
+Browser propagation (§6.1) is validated by `ap-web/src/lib/telemetry.test.ts` and the
+production build; the server-side extraction it depends on is exercised by the live turn
+above.
 
 ---
 

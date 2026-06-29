@@ -85,6 +85,97 @@ def should_capture_content() -> bool:
     return _capture_content
 
 
+# Max characters of a serialized payload to attach to a span. Bodies can be
+# large; the trace backend is not a payload store, so cap aggressively.
+_CONTENT_MAX_LEN = 4096
+
+# Substrings that mark a payload key as a secret to redact even when content
+# capture is on — a frame body like ``host.launch_runner`` carries a
+# ``binding_token``, and we never want a credential on a span.
+_REDACT_KEY_SUBSTRINGS = (
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "credential",
+    "api_key",
+    "apikey",
+)
+
+
+def _redact_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """
+    Copy a message payload, redacting secret-looking values.
+
+    Drops the W3C propagation keys (they ride in the envelope, not the
+    message) and replaces any value whose key looks like a credential
+    with ``"[redacted]"``. Non-secret values pass through unchanged.
+
+    :param payload: The decoded frame / message dict.
+    :returns: A shallow copy safe to serialize onto a span.
+    """
+    redacted: dict[str, Any] = {}
+    for key, value in payload.items():
+        lowered = key.lower()
+        if lowered in ("traceparent", "tracestate"):
+            continue
+        if any(token in lowered for token in _REDACT_KEY_SUBSTRINGS):
+            redacted[key] = "[redacted]"
+        else:
+            redacted[key] = value
+    return redacted
+
+
+def _payload_to_attribute(payload: Mapping[str, Any]) -> str:
+    """
+    Serialize a redacted payload to a length-capped JSON string.
+
+    :param payload: The message dict to record.
+    :returns: A JSON string, truncated to :data:`_CONTENT_MAX_LEN`.
+    """
+    import json
+
+    redacted = _redact_payload(payload)
+    try:
+        text = json.dumps(redacted, default=str)
+    except (TypeError, ValueError):
+        text = str(redacted)
+    if len(text) > _CONTENT_MAX_LEN:
+        text = text[:_CONTENT_MAX_LEN] + "…[truncated]"
+    return text
+
+
+def record_message_payload(
+    payload: Mapping[str, Any],
+    *,
+    span: Any = None,
+    key: str = "omnigent.message.payload",
+) -> None:
+    """
+    Attach a message payload to a span, gated by content capture.
+
+    No-op unless ``OMNIGENT_OTEL_CAPTURE_CONTENT`` is set — payloads may
+    hold PII, so capturing the literal body of an inter-service message
+    is opt-in. The payload is redacted (:func:`_redact_payload`) and
+    length-capped before it is recorded.
+
+    :param payload: The decoded frame / message dict to record.
+    :param span: The span to annotate. Defaults to the currently active
+        span; a no-op if none is recording.
+    :param key: The span attribute name to use.
+    """
+    if not should_capture_content():
+        return
+    target = span
+    if target is None:
+        from opentelemetry import trace as otel_trace
+
+        target = otel_trace.get_current_span()
+    if target is None or not getattr(target, "is_recording", lambda: False)():
+        return
+    target.set_attribute(key, _payload_to_attribute(payload))
+
+
 def _fastapi_instrumentation_enabled() -> bool:
     """
     Decide whether to install FastAPI server instrumentation.
@@ -470,6 +561,9 @@ def consume_frame_span(
     ) as span:
         for key, value in (attributes or {}).items():
             span.set_attribute(key, value)
+        # Record the received message body (redacted, capped) when content
+        # capture is on, so operators can see exactly what crossed the wire.
+        record_message_payload(carrier, span=span)
         yield span
 
 

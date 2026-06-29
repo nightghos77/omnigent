@@ -14215,6 +14215,7 @@ def create_sessions_router(
             # wire-identical in the common case.
             from omnigent.runtime import telemetry
 
+            telemetry.record_message_payload(frame)
             telemetry.inject_trace_context(frame)
             await websocket.send_text(json.dumps(frame))
             last_send_monotonic = time.monotonic()

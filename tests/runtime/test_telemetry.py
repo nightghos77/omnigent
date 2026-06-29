@@ -726,6 +726,69 @@ def test_consume_frame_span_roots_new_trace_without_carrier(
         assert span.get_span_context().trace_id != 0
 
 
+def test_consume_frame_span_omits_payload_when_capture_off(
+    in_memory_exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    With content capture off (the default), the frame body is NOT
+    attached to the span — only its structure/metadata is traced.
+    """
+    monkeypatch.setattr(telemetry, "_capture_content", False)
+    with telemetry.consume_frame_span(
+        "host.launch_runner",
+        {"kind": "host.launch_runner", "workspace": "/tmp"},
+    ):
+        pass
+    span = in_memory_exporter.get_finished_spans()[-1]
+    assert "omnigent.message.payload" not in (span.attributes or {})
+
+
+def test_consume_frame_span_records_redacted_payload_when_capture_on(
+    in_memory_exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    With content capture on, the received frame body is attached to the
+    span — but secret-looking keys are redacted, the W3C propagation
+    keys are dropped, and benign fields are preserved verbatim.
+    """
+    monkeypatch.setattr(telemetry, "_capture_content", True)
+    with telemetry.consume_frame_span(
+        "host.launch_runner",
+        {
+            "kind": "host.launch_runner",
+            "binding_token": "SUPER_SECRET",
+            "workspace": "/tmp/ws",
+            "traceparent": "00-abc-def-01",
+        },
+    ):
+        pass
+    span = in_memory_exporter.get_finished_spans()[-1]
+    payload = (span.attributes or {})["omnigent.message.payload"]
+    assert "SUPER_SECRET" not in payload
+    assert "[redacted]" in payload
+    assert "traceparent" not in payload
+    assert "/tmp/ws" in payload
+
+
+def test_record_message_payload_truncates(
+    in_memory_exporter: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    An oversized payload is capped so the trace backend never becomes a
+    payload store.
+    """
+    monkeypatch.setattr(telemetry, "_capture_content", True)
+    with telemetry.span("x") as span:
+        telemetry.record_message_payload({"blob": "A" * 9000}, span=span)
+    out = in_memory_exporter.get_finished_spans()[-1]
+    payload = (out.attributes or {})["omnigent.message.payload"]
+    assert payload.endswith("…[truncated]")
+    assert len(payload) <= telemetry._CONTENT_MAX_LEN + len("…[truncated]")
+
+
 def test_span_helper_emits_named_span_with_attributes(
     in_memory_exporter: InMemorySpanExporter,
 ) -> None:

@@ -513,6 +513,10 @@ def _encode_payload(payload: dict[str, Any]) -> str:
     """
     from omnigent.runtime import telemetry
 
+    # Record the outbound body on the active span (redacted, gated by
+    # content capture) before injecting propagation keys, so the span
+    # shows exactly what this side sent.
+    telemetry.record_message_payload(payload)
     telemetry.inject_trace_context(payload)
     return json.dumps(payload)
 

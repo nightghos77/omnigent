@@ -260,6 +260,13 @@ class PolicyEngine:
                 "policy.read_only": read_only,
             },
         ) as evaluate_span:
+            # The content under evaluation (tool args / prompt) is recorded
+            # only when content capture is on (redacted + capped).
+            telemetry.record_message_payload(
+                {"content": ctx.content},
+                span=evaluate_span,
+                key="policy.content",
+            )
             result = await self._evaluate_composed(ctx, read_only=read_only)
             evaluate_span.set_attribute(
                 "policy.decision",
