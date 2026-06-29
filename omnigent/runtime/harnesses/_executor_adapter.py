@@ -420,7 +420,7 @@ class ExecutorAdapter(HarnessApp):
                             from omnigent.runtime.telemetry import record_cancellation
 
                             record_cancellation(agent_span)
-                            tctx.end_agent_span(agent_span, response=None, status="ERROR")
+                            tctx.end_agent_span(agent_span, response=None)
                             agent_span = None
                         await executor.interrupt_session(self._session_key)
                         return
@@ -437,7 +437,6 @@ class ExecutorAdapter(HarnessApp):
                                 tctx.end_tool_span(
                                     _active_tool_span,
                                     result=event.result,
-                                    status="ERROR" if event.error else "OK",
                                     error=event.error,
                                     duration_ms=event.duration_ms,
                                     parent_span=_active_tool_parent,
@@ -465,14 +464,13 @@ class ExecutorAdapter(HarnessApp):
                             from omnigent.runtime.telemetry import record_cancellation
 
                             record_cancellation(agent_span)
-                            tctx.end_agent_span(agent_span, response=None, status="ERROR")
+                            tctx.end_agent_span(agent_span, response=None)
                         return
                     if isinstance(event, ExecutorError):
                         if tctx is not None and agent_span is not None:
                             tctx.end_agent_span(
                                 agent_span,
                                 response=None,
-                                status="ERROR",
                                 error=event.message,
                             )
                             agent_span = None
@@ -481,9 +479,7 @@ class ExecutorAdapter(HarnessApp):
             # End agent span on unhandled exceptions so it's not
             # left open (which would leak on the OTel provider).
             if tctx is not None and agent_span is not None:
-                tctx.end_agent_span(
-                    agent_span, response=None, status="ERROR", error="unhandled exception"
-                )
+                tctx.end_agent_span(agent_span, response=None, error="unhandled exception")
                 agent_span = None
             raise
         finally:
