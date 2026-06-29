@@ -465,75 +465,72 @@ session_usage,compaction_status}`. Reasoning: streamed as `ReasoningChunk`; pers
 
 ## 6. Reliability-gap findings
 
-(Open questions for the team live in `CUJ-MAP.md` §5.) **Candidate cleanup targets surfaced by the pass:**
-1. **No spawn-time subagent depth cap** — `_MAX_SUBAGENT_TREE_DEPTH=3` is display-only; nothing stops runaway
-   recursion/fan-out at spawn time (`inner/tools.py`, code comment defers it). [§2.F]
-2. **Policy-hook static token → fail-closed after ~1 h** — native PreToolUse hook never refreshes its snapshot token;
-   tool calls die while chat survives. Reportedly fixed (PR #1439) — **verify the fix is live**. [§2.G / §2.D]
-3. **WS tunnel runner-auth: Bearer injected once at open, no per-message refresh** — does a long-lived tunnel survive
-   token expiry? [§2.G]
-4. **Hard runner affinity, no failover** — a bound runner going offline strands the session (no rebind/rebalance). [§2.F]
-5. **`sys_cancel_task` is a no-op** — tasks table removed → returns `task_not_found` for all inputs; is async
-   cancellation actually broken? [§2.F]
-6. **Permission store disabled ⇒ `accessible_by=None` returns ALL sessions** — potential cross-user data leak on
-   open/misconfigured servers; `_require_user()` must gate. [§2.A]
-7. **Runner-offline-on-message** — event persisted but not forwarded → client stuck "working" until timeout (no
-   surfaced error). [§2.A]
-8. **Streaming↔durable dedup hinges on `itemId`** — the FIFO-desync bug class lives here. [§2.A, memory]
-9. **Native mid-session model override may not affect the running turn** — only next turn. [§2.B]
+(Open questions for the team live in `CUJ-MAP.md` §5.) **Grouped by CUJ domain.** Each item merges the
+**code-pass** findings (no issue filed) with the **OSS-repo triage** (🔴 P0 / 🟠 P1 / 🟡 P2; live on latest `main` —
+prod is v0.3.0 (2026-06-27), so the batch merged 06-29 is on `main` but not yet released). Format: what's broken →
+source-of-truth (SoT) anchor → issue/PR refs.
 
-   _(Note: interrupt is NOT a gap — all in-scope harnesses support the web Stop button: claude-sdk/codex via
-   `executor.interrupt_session()`, claude-native via bridge `inject_interrupt` (Escape), codex-native via
-   `turn/interrupt` RPC.)_
+### Session lifecycle, streaming & continuity [§2.A]
+- 🔴 **Idle reaper / watchdog kills active turns; native sessions never reaped.** SoT: no writers to
+  `_in_flight_response_ids`, no `OMNIGENT_HARNESS_IDLE_TIMEOUT` knob on `main`. Issues #1414, #1349 (**no PR**),
+  #1528, #1119 · PRs #1420, #1529, #371, #1227.
+- 🟠 **Runner tunnel / stream-recovery defects.** Issues #1116 (keepalive-1011 drops tunnels, **no PR**), #1117,
+  #1118, #1026, #1076 · PRs #1198 (SSE teardown), #1189 (finish_reason), #1077 (desync recovery) · in `main` #1078.
+- **(code-pass) Runner-offline-on-message** — event persisted but not forwarded → client stuck "working" until timeout.
+- **(code-pass) Streaming↔durable dedup hinges on `itemId`** — the FIFO-desync bug class lives here. [memory]
 
-### 6.1  Open-issue clusters from OSS-repo triage (latest `main`)
+  _Interrupt is NOT a gap: all in-scope harnesses support the web Stop — claude-sdk/codex via
+  `executor.interrupt_session()`, claude-native via bridge `inject_interrupt` (Escape), codex-native via
+  `turn/interrupt` RPC._
 
-Live bugs on `main` (prod = v0.3.0, 2026-06-27; a batch merged 06-29 is in `main` but not yet released).
-Prioritized; feature requests excluded. Each cluster → its CUJ + source-of-truth (SoT) anchor + issue/PR refs.
+### Model selection [§2.B]
+- 🟠 **claude-sdk silently bills Opus when Sonnet was selected** (cost/billing). SoT: `claude_sdk_executor.py:1910`
+  `model = _DATABRICKS_CLAUDE_DEFAULT_MODEL` fires when the override is None. Issue #1128 · real fix PR #1146 ·
+  ⚠️ #1570/#1563 (frontend, in `main`) do **not** fix it.
+- **(code-pass) Native mid-session model override may not affect the running turn** — next turn only.
 
-**🔴 P0 — critical, multi-reporter**
-1. **Native sub-agent completions silently never reach the orchestrator** → §2.F (spawn / info-prop #5 / async-inbox)
-   + §2.A (delivery). SoT: gate `runner/app.py:12496` → `elif not _is_native_harness(conv_id) and not has_buffered:`
-   excludes every native harness from completion delivery (7 reporters). Issues #848(root), #697, #880, #1449,
-   #1113, #1589, #1410, #762 · open PRs #853, #698, #1593, #1462 · partial-in-`main` #1286, #1588, #1446.
-2. **Idle reaper / watchdog kills active turns; native sessions never reaped** → §2.A (disconnect, send+stream) +
-   invariant 4 (working-state). SoT: no writers to `_in_flight_response_ids`, no `OMNIGENT_HARNESS_IDLE_TIMEOUT`
-   knob on `main`. Issues #1414, #1349 (P0, **no PR**), #1528, #1119 · open PRs #1420, #1529, #371, #1227.
-3. **Managed sandboxes broken under OIDC/accounts auth** → §2.G (runner↔server + client↔server auth) +
-   §2.A (host_id create). SoT: runner tunnel 403; host never boots (`nohup` env-prefix). Issues #357, #1305, #1297 ·
-   open PRs #1298 (host boot), #360 + #1308 (overlapping tunnel-auth — pick one). **Extends gap #3 above.**
+### Subagents & runner dispatch [§2.F]
+- 🔴 **Native sub-agent completions silently never reach the orchestrator** (7 reporters). SoT: gate
+  `runner/app.py:12496` → `elif not _is_native_harness(conv_id) and not has_buffered:` excludes every native harness.
+  Issues #848 (root), #697, #880, #1449, #1113, #1589, #1410, #762 · open PRs #853, #698, #1593, #1462 ·
+  partial-in-`main` #1286, #1588, #1446.
+- **(code-pass) No spawn-time subagent depth cap** — `_MAX_SUBAGENT_TREE_DEPTH=3` is display-only (`inner/tools.py`).
+- **(code-pass) Hard runner affinity, no failover** — a bound runner going offline strands the session.
+- **(code-pass) `sys_cancel_task` is a no-op** — tasks table removed → returns `task_not_found` for all inputs.
 
-**🟠 P1 — high**
-4. **claude-sdk silently bills Opus when Sonnet was selected** (cost/billing) → §2.B (default model resolution).
-   SoT: `claude_sdk_executor.py:1910` `model = _DATABRICKS_CLAUDE_DEFAULT_MODEL` fires when the override is None.
-   Issue #1128 · real backend fix PR #1146 · ⚠️ #1570/#1563 (frontend, already in `main`) do **not** fix it.
-5. **Host daemon can't reach backend behind a corporate proxy** → §2.C (egress) + §2.G (runner connectivity).
-   SoT: `cli.py` daemon allowlist has no `HTTP(S)_PROXY`/`NO_PROXY`; no config workaround. Issue #1022 · PR #1029.
-6. **Runner tunnel / stream-recovery defects** → §2.A (reconnect, streaming) + §2.H (WS/SSE) + invariant 1.
-   Issues #1116 (keepalive-1011 drops tunnels, **no PR**), #1117, #1118, #1026, #1076 · open PRs #1198 (SSE teardown),
-   #1189 (finish_reason), #1077 (desync recovery, rebase on #1078) · in `main` #1078 (fail-closed policy). **Relates to gap #4 (affinity).**
-7. **First-run install: Claude CLI via `npm -g` → EACCES** → §2.G (first-run setup). Issue #890 · PR #891 (native installer).
-   Also live, no PR: #904 (`omnigent claude` config-json crash), #1023 (`[Errno 8]` on macOS arm64).
-8. **Sandboxed claude-sdk crashes on macOS instead of degrading** → §2.C (sandbox/OmniBox). Issue #517 · part-2 flag
-   #541 is in `main`; part-1 auto-degrade never landed (**no PR**) → still crashes by default.
-9. **`credential_proxy` trust-boundary defect (SECURITY)** → §2.C (OmniBox credential injection) + §2.G. SoT:
-   `credential_proxy.py` runs parent-side `subprocess.run(..., shell=True)` + arbitrary file reads on an unenforced
-   "trusted-spec-only" assumption. Issue #1542 · **no PR**.
+### Onboarding, credentials & auth [§2.G]
+- 🔴 **Managed sandboxes broken under OIDC/accounts auth.** SoT: runner tunnel 403; host never boots (`nohup`
+  env-prefix). Issues #357, #1305, #1297 · PRs #1298 (host boot), #360 + #1308 (overlapping tunnel-auth — pick one).
+- 🟠 **Host daemon can't reach backend behind a corporate proxy.** SoT: `cli.py` daemon allowlist has no
+  `HTTP(S)_PROXY`/`NO_PROXY`; no config workaround. Issue #1022 · PR #1029.
+- 🟠 **First-run install: Claude CLI via `npm -g` → EACCES.** Issue #890 · PR #891 (native installer). Also live,
+  no PR: #904 (`omnigent claude` config-json crash), #1023 (`[Errno 8]` macOS arm64).
+- **(code-pass) Policy-hook static token → fail-closed after ~1 h** — native PreToolUse hook never refreshes its
+  snapshot token (`runner/app.py:1137-1145`); tool calls die while chat survives. PR #1439 — **verify live**. [also §2.D]
+- **(code-pass) WS tunnel runner-auth: Bearer injected once at open, no per-message refresh** — survives token expiry?
 
-**🟡 P2 — medium**
-10. **CJK IME: Enter to confirm composition submits prematurely** (data-loss for CJK users, no workaround) →
-    §2.E (compose/send). SoT: synchronous `onCompositionEnd` still on `main`. Issue #433 · PR #567.
-11. **File viewer / browser gaps** → §2.E (files). Non-git Changes panel empty #725 (PR #843); browser empty after
-    reconnect #386 (PR #578); staged/unstaged filter #951 (PR #1587); mobile HTML preview/download #968/#969 (no PR);
-    fullscreen #1464 (no PR).
-12. **`/compact` raw error on model-less SDK harnesses (REPL/API)** → §2.A (compaction). SoT: error reachable at
-    `sessions.py:9847`; UI-hide #1139 (in `main`) shields web users only. Issue #1192 · open PRs #1206/#1205.
-    (Maintainer leans wont-fix for true in-place SDK compaction.)
+### Tools / sandbox (OmniBox) [§2.C]
+- 🟠 **`credential_proxy` trust-boundary defect (SECURITY).** SoT: `credential_proxy.py` runs parent-side
+  `subprocess.run(..., shell=True)` + arbitrary file reads on an unenforced "trusted-spec-only" assumption.
+  Issue #1542 · **no PR**.
+- 🟠 **Sandboxed claude-sdk crashes on macOS instead of degrading.** Issue #517 · part-2 flag #541 in `main`;
+  part-1 auto-degrade never landed (**no PR**) → still crashes by default.
 
-**✅ Already fixed on `main` since the v0.3.0 cut (not gaps):** #668 macOS 60s timeout (#1546), web_search on non-OpenAI
-(#54), markdown preview (#970), Windows (#19/#1236/#1325/#1375), install aarch64/Intel/gpt-deps (#308/#458/#296).
+### Policy / access control [§2.D]
+- **(code-pass) Permission store disabled ⇒ `accessible_by=None` returns ALL sessions** — cross-user data-leak risk
+  on open/misconfigured servers; `_require_user()` must gate. [also §2.A]
+
+### Web UI [§2.E]
+- 🟡 **CJK IME: Enter to confirm composition submits prematurely** (data-loss for CJK users, no workaround).
+  SoT: synchronous `onCompositionEnd` on `main`. Issue #433 · PR #567.
+- 🟡 **File viewer / browser gaps.** Non-git Changes panel empty #725 (PR #843); browser empty after reconnect #386
+  (PR #578); staged/unstaged filter #951 (PR #1587); mobile HTML preview/download #968/#969 (no PR); fullscreen #1464 (no PR).
+
+---
+
+**✅ Already fixed on `main` since v0.3.0 (not gaps):** #668 macOS 60s timeout (#1546), web_search on non-OpenAI (#54),
+markdown preview (#970), Windows (#19/#1236/#1325/#1375), install aarch64/Intel/gpt-deps (#308/#458/#296).
 **🚫 Excluded as feature requests:** new-harness demand, multi-account/credential features, monolith decomposition,
-command-palette/shortcuts.
-
+command-palette/shortcuts. **Dropped as minor:** model-less SDK `/compact` raw error (#1192 — web shielded by #1139, maintainer leans wont-fix).
 **Fast wins (PRs written, just unreviewed):** #1146, #1029, #891, #1198, #1189, #567.
 **No-PR gaps needing fresh code:** #1349, #1116, #517 (part-1), #1542.

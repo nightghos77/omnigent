@@ -32,19 +32,19 @@ TURN STATE: idle · working · awaiting-elicitation · interrupted · compacting
 
 ## 2. The CUJ tree (journeys)
 
-> Inline `[open: #…]` tags = live OSS issues/PRs mapped to that journey (triage on latest `main`). Full
-> prioritized cluster analysis with code anchors is in [`CUJ-ANALYSIS.md`](./CUJ-ANALYSIS.md) §6.1.
+> This is the **ideal state** — what a user can/should be able to do. Known bugs against these journeys
+> are *not* listed here; they live in [`CUJ-ANALYSIS.md`](./CUJ-ANALYSIS.md) §6, grouped by domain.
 
 ### 2.A  Session lifecycle & continuity
 - [ ] Create a new session (new chat / from existing agent / bundled upload)
 - [ ] Resume a session — *how much transcript loads into the runner?*
 - [ ] Fork a session — *how is the forked transcript constructed?*
 - [ ] Switch agent in place (mid-session)
-- [ ] Disconnect → reconnect (TUI / WebUI) ⚠️ `[open: #1414/#1349 idle-reaper · #1116 tunnel-drop · #1198/#1189/#1077 stream recovery]`
+- [ ] Disconnect → reconnect (TUI / WebUI) ⚠️
 - [ ] Close the page & come back later
 - [ ] Close / archive / delete a session
-- [ ] Send a message + receive a streaming response `[open: #433 CJK IME premature submit]`
-- [ ] Compaction / context-window overflow ⚠️ `[open: #1192 /compact raw error on model-less SDK]`
+- [ ] Send a message + receive a streaming response
+- [ ] Compaction / context-window overflow ⚠️
 - [ ] First-message delivery / optimistic pending input ⚠️
 - [ ] Local↔server transcript reconstruction & mismatch
 
@@ -52,7 +52,7 @@ TURN STATE: idle · working · awaiting-elicitation · interrupted · compacting
 - [ ] Pick a harness at session start
 - [ ] Switch harness mid-session
 - [ ] Change model / effort — at start and mid-session (from WebUI)
-- [ ] Default model / provider resolution `[open: #1128 silent Opus mis-billing]`
+- [ ] Default model / provider resolution
 - [ ] Propagate the user's OWN harness config into omni (e.g. `~/.claude`) (#3)
 - [ ] Native vs SDK behavioral differences
 
@@ -61,7 +61,7 @@ TURN STATE: idle · working · awaiting-elicitation · interrupted · compacting
 - [ ] Register & use a custom (user-defined) MCP server
 - [ ] MCP routing — who routes a tool call where?
 - [ ] Use shells (#4) — *how is the working dir determined? how are shells exposed to agents?*
-- [ ] OmniBox / OS sandbox (filesystem + network isolation + credential injection) `[open: #1542 cred-proxy SECURITY · #517 macOS crash-not-degrade · #1022 daemon proxy egress]`
+- [ ] OmniBox / OS sandbox (filesystem + network isolation + credential injection)
 - [ ] Timers & async background work
 
 ### 2.D  Policies, approvals, elicitations
@@ -84,13 +84,13 @@ TURN STATE: idle · working · awaiting-elicitation · interrupted · compacting
 - [ ] See "working vs idle" state — and how that state propagates through the system
 - [ ] Reconcile streaming vs durable messages into one coherent view
 - [ ] Stop / interrupt a running turn
-- [ ] Browse / view / edit files; terminals; subagents rail `[open: #725/#386/#951/#968/#969/#1464 file viewer/browser gaps]`
+- [ ] Browse / view / edit files; terminals; subagents rail
 - [ ] Settings (theme / shortcuts / account); Policies admin page
 - [ ] TUI / REPL equivalents of the above
 
 ### 2.F  Agents, subagents, executor, routing
 - [ ] The executor's role in the turn loop
-- [ ] Spawn subagents `[open: #848 cluster — native sub-agent completions never delivered]`
+- [ ] Spawn subagents
 - [ ] Information propagation between agents & subagents (#5)
 - [ ] Subagent depth limits ⚠️
 - [ ] Intelligent routing (#10)
@@ -101,9 +101,9 @@ TURN STATE: idle · working · awaiting-elicitation · interrupted · compacting
 - [ ] Resume dispatch (which harness gets re-launched?)
 
 ### 2.G  Onboarding, credentials, auth
-- [ ] First-run setup / provider selection `[open: #890/#891 npm -g EACCES · #904 · #1023 macOS arm64]`
+- [ ] First-run setup / provider selection
 - [ ] LLM credential resolution + refresh
-- [ ] Runner ↔ server auth + refresh `[open: #357/#1305/#1297 managed-sandbox under OIDC]`
+- [ ] Runner ↔ server auth + refresh
 - [ ] Client ↔ server auth + refresh
 - [ ] Token refresh in the chat path vs the policy-server path ⚠️
 - [ ] Caching: what's cached, TTL, invalidation (agents, credentials)
