@@ -21,6 +21,21 @@ on:
       - reopened
       - labeled
       - closed
+  # TEMPORARY (pre-merge testing only) -- REMOVE before merging to main.
+  # pull_request_target only runs from the workflow version on the DEFAULT
+  # branch, so a brand-new preview workflow can't be exercised from the PR
+  # branch. This pull_request trigger runs the branch's own copy so the preview
+  # can be validated before it lands on main. Same-repo PRs (like this one) get
+  # repo secrets on pull_request; forks do not -- that's why production uses
+  # pull_request_target. Leaving both enabled on main would double-fire (two
+  # deploys per event), so delete this block at merge time.
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - labeled
+      - closed
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || 'main' }}
