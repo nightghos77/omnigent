@@ -1,10 +1,9 @@
 name: UI Preview
 
 # Per-PR live preview of the Omnigent web UI, deployed to Databricks Apps.
-# Close port of MLflow's .github/workflows/ui-preview.yml. The preview is
-# ephemeral (SQLite + local artifacts) and ships no LLM/runner -- Omnigent runs
-# agent turns on a runner the reviewer connects from their own machine. See
-# .github/ui-preview/README.md.
+# The preview is ephemeral (SQLite + local artifacts) and ships no LLM/runner --
+# Omnigent runs agent turns on a runner the reviewer connects from their own
+# machine. See .github/ui-preview/README.md.
 
 on:
   push:
@@ -112,9 +111,9 @@ jobs:
       - name: Build wheels (no UI)
         # Build the wheels WITHOUT the SPA so they stay small (Databricks Apps
         # caps each source wheel at 10MB). The SPA ships separately as
-        # build.tar.gz and is extracted at runtime by app.py. Mirrors MLflow's
-        # wheel-without-UI + tarball split. SKIP_WEB_UI skips build.sh's own npm
-        # build; OMNIGENT_SKIP_WEB_UI makes setup.py skip the in-wheel UI build.
+        # build.tar.gz and is extracted at runtime by app.py. SKIP_WEB_UI skips
+        # build.sh's own npm build; OMNIGENT_SKIP_WEB_UI makes setup.py skip the
+        # in-wheel UI build.
         env:
           SKIP_WEB_UI: "1"
           OMNIGENT_SKIP_WEB_UI: "true"
@@ -142,8 +141,12 @@ jobs:
           for whl in /tmp/app-deploy/*.whl; do
             size=$(stat -c %s "$whl")
             echo "Wheel $(basename "$whl"): $(numfmt --to=iec "$size")"
+            # Fail fast: an oversize wheel can't be installed from the app source
+            # snapshot and would otherwise fail later in the deploy with a far
+            # less obvious error. (deploy/databricks/deploy.py raises here too.)
             if [ "$size" -gt 10485760 ]; then
-              echo "::warning::$(basename "$whl") exceeds the 10MB Databricks Apps wheel limit"
+              echo "::error::$(basename "$whl") exceeds the 10MB Databricks Apps wheel limit"
+              exit 1
             fi
           done
           # Databricks Apps must install via uv (pyproject.toml + uv.lock), NOT a
@@ -193,9 +196,8 @@ jobs:
 
   deploy:
     needs: build
-    # MLflow uses a static-IP runner (`ubuntu-ui-preview`) for workspace IP
-    # allowlisting. Use ubuntu-latest unless/until such a runner exists; switch
-    # `runs-on` if the Databricks workspace IP-allowlists.
+    # Use ubuntu-latest. If the Databricks workspace IP-allowlists, register a
+    # static-IP runner and switch `runs-on` to it.
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -279,7 +281,7 @@ jobs:
           # `apps deploy` restarts the app process and re-extracts source, but
           # reuses the existing Python env, so a freshly built wheel is not
           # reinstalled. Stop then start so the env is rebuilt from the deployed
-          # source. (Same dance as MLflow's preview.)
+          # source.
           echo "Stopping app..."
           databricks apps stop "$APP_NAME"
           for i in $(seq 1 40); do
@@ -354,10 +356,13 @@ jobs:
           fi
 
   cleanup:
+    # No `ui-preview` label gate here on purpose: if the label is removed before
+    # the PR closes, a labelled-then-unlabelled PR would otherwise leak its app
+    # and workspace files forever. Run on every close; the delete step is a cheap
+    # no-op (one existence check) for PRs that never had a preview.
     if: >-
       github.event_name != 'push'
       && github.event.action == 'closed'
-      && contains(github.event.pull_request.labels.*.name, 'ui-preview')
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write

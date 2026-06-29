@@ -4,8 +4,6 @@ Deploy a live, per-PR preview of the Omnigent web UI as a
 [Databricks App](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/)
 when a PR changes the frontend (`web/`).
 
-This is a close port of [MLflow's UI Preview](https://github.com/mlflow/mlflow/blob/master/.github/workflows/ui-preview.yml).
-
 ## How it works
 
 1. A maintainer adds the `ui-preview` label to a PR (the workflow is gated to
@@ -37,7 +35,7 @@ auth mode).
 
 ## Setup (one-time, by a maintainer)
 
-Add these repo secrets (same names MLflow uses):
+Add these repo secrets:
 
 - `DATABRICKS_HOST`
 - `DATABRICKS_CLIENT_ID`
