@@ -4,8 +4,7 @@ Each public function is a :class:`FunctionPolicy` *factory*: it takes the
 YAML ``factory_params`` as keyword arguments and returns an evaluator
 callable ``fn(event[, config]) -> {"result": ..., "reason": ...}``.
 The evaluators run runner-side at tool dispatch
-(``omnigent/runner/policy.py``) and add no server routes. See
-``designs/NESSIE.md`` "Layer 1 — enforcement".
+(``omnigent/runner/policy.py``) and add no server routes.
 """
 
 from __future__ import annotations
