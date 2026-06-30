@@ -13178,9 +13178,6 @@ def create_runner_app(
             # When set it BEATS the advisor (verdict recorded, not applied).
             user_model_override=msg_body.get("model_override"),
             cost_control_mode_override=cost_control_mode_override,
-            # Lets a judge-null turn announce the carried-forward selection
-            # instead of silently keeping it.
-            sticky_model=_session_advisor_applied_model.get(conv),
         )
 
     def _emit_routing_decision(conv: str, result: AdvisorTurnResult | None) -> None:
