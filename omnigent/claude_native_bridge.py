@@ -2608,6 +2608,7 @@ def display_cost_approval_popup(
     policy_name: str | None = None,
     python_executable: str | None = None,
     timeout_s: float = _TMUX_READY_TIMEOUT_S,
+    config_file: Path | None = None,
 ) -> None:
     """
     Overlay a cost-budget approval modal on the Claude Code tmux pane.
@@ -2652,6 +2653,11 @@ def display_cost_approval_popup(
         valid on the host the tmux server runs on).
     :param timeout_s: Seconds to wait for ``tmux.json`` to be advertised,
         e.g. ``30.0``.
+    :param config_file: AP-routing config the popup reads (base URL + auth
+        headers). ``None`` falls back to this bridge's ``permission_hook.json``
+        — but that carries the one-shot launch token, which dies with the ~1h
+        Databricks OAuth lifetime, so callers should pass a freshly-minted
+        snapshot to keep a late-firing verdict POST from 401-ing.
     :returns: None.
     :raises RuntimeError: If the tmux target is not advertised within
         *timeout_s* (the pane isn't up yet); the caller treats this as a
@@ -2663,7 +2669,7 @@ def display_cost_approval_popup(
     launch_cost_popup(
         info["socket_path"],
         info["tmux_target"],
-        bridge_dir / _PERMISSION_HOOK_FILE,
+        config_file if config_file is not None else bridge_dir / _PERMISSION_HOOK_FILE,
         session_id=session_id,
         elicitation_id=elicitation_id,
         message=message,

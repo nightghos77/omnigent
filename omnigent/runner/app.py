@@ -12098,6 +12098,10 @@ def create_runner_app(
             session_id=conv_id,
         )
         bridge_dir = bridge_dir_for_bridge_id(bridge_id)
+        # Mint a fresh AP-routing snapshot rather than letting the popup read
+        # this bridge's permission_hook.json, whose launch token goes stale at
+        # ~1h and would 401 the verdict POST (silently losing the approval).
+        config_file = await _native_cost_popup_config_file(conv_id, "claude-native")
         try:
             # Short timeout: missing tmux.json means the pane isn't
             # attached, so there is no client to render the modal — the
@@ -12110,6 +12114,7 @@ def create_runner_app(
                 message=message,
                 policy_name=policy_name,
                 timeout_s=1.0,
+                config_file=config_file,
             )
         except (RuntimeError, ValueError) as exc:
             return JSONResponse(
@@ -12135,9 +12140,10 @@ def create_runner_app(
         a ``tmux.json`` (its terminal is launched through the resource
         registry), so the pane's socket/target come from the registry
         instance — the same source the web-terminal attach uses — and AP
-        routing comes from this bridge's ``policy_hook.json``. Resolution
-        differs; the actual popup launch is the shared, harness-agnostic
-        :func:`omnigent.native_cost_popup.launch_cost_popup`.
+        routing comes from a freshly-minted snapshot (see
+        :func:`_native_cost_popup_config_file`) rather than the stale launch
+        token. Resolution differs; the actual popup launch is the shared,
+        harness-agnostic :func:`omnigent.native_cost_popup.launch_cost_popup`.
 
         Best-effort: skips (204) when no live codex terminal is registered
         for the session, so the web ApprovalCard remains the surface.
@@ -12152,7 +12158,6 @@ def create_runner_app(
         :returns: 204 once the popup is dispatched (or skipped when no
             terminal is registered). 503 if launching raised.
         """
-        from omnigent.codex_native_bridge import _POLICY_HOOK_FILE, bridge_dir_for_bridge_id
         from omnigent.native_cost_popup import launch_cost_popup
 
         registry = resource_registry.terminal_registry
@@ -12160,7 +12165,10 @@ def create_runner_app(
         if instance is None or not instance.running:
             # No live codex terminal to render on; web card is the surface.
             return Response(status_code=204)
-        config_file = bridge_dir_for_bridge_id(conv_id) / _POLICY_HOOK_FILE
+        # Mint a fresh AP-routing snapshot rather than reading this bridge's
+        # policy_hook.json, whose launch token goes stale at ~1h and would 401
+        # the verdict POST (silently losing the approval).
+        config_file = await _native_cost_popup_config_file(conv_id, "codex-native")
         try:
             await asyncio.to_thread(
                 launch_cost_popup,

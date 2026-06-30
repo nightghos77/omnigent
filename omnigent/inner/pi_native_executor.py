@@ -125,9 +125,7 @@ class PiNativeExecutor(Executor):
             factory = _make_auth_token_factory()
             token = factory() if factory is not None else None
             if token:
-                refresh_config_auth_headers(
-                    self._bridge_dir, {"Authorization": f"Bearer {token}"}
-                )
+                refresh_config_auth_headers(self._bridge_dir, {"Authorization": f"Bearer {token}"})
         except Exception:  # noqa: BLE001 — best-effort refresh; never block a turn
             pass
 

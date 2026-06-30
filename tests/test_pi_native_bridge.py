@@ -241,9 +241,7 @@ def test_refresh_config_auth_headers_replaces_only_auth(tmp_path: Path) -> None:
     )
 
     assert (
-        pi_native_bridge.refresh_config_auth_headers(
-            bridge_dir, {"Authorization": "Bearer fresh"}
-        )
+        pi_native_bridge.refresh_config_auth_headers(bridge_dir, {"Authorization": "Bearer fresh"})
         is True
     )
     payload = json.loads(pi_native_bridge.config_path(bridge_dir).read_text(encoding="utf-8"))
