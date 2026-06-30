@@ -85,8 +85,10 @@ def test_switch_agent_in_place_carries_history(
     In mock mode the source agent is an inline ``openai-agents`` agent
     pointed at the mock LLM server, and the ``sdk-chat-builtin`` built-in
     is wired to the mock server via ``executor.auth.base_url`` (seeded in
-    ``conftest._materialize_builtin_sdk_chat_spec``). The mock server
-    keys responses by model name so each agent gets its own queue.
+    ``conftest._materialize_builtin_sdk_chat_spec``). The source agent's
+    queue is keyed by its unique model; the recall queue is claimed by a
+    token unique to the recall turn (content-routing ``match``) so a
+    stray request under the shared target model cannot drain it.
 
     :param http_client: HTTP client pointed at the live server.
     :param claude_coder_agent: The uploaded claude-sdk source agent name
@@ -111,9 +113,16 @@ def test_switch_agent_in_place_carries_history(
             prompt="You are a terse assistant.",
             mock_llm_base_url=f"{mock_llm_server_url}/v1",
         )
-        # Target: the sdk-chat-builtin built-in uses model
-        # "claude-sonnet-4-20250514" — key the mock queue on that.
-        target_model = "claude-sonnet-4-20250514"
+        # The sdk-chat-builtin built-in uses the SHARED model name
+        # "claude-sonnet-4-20250514". Keying the recall queue on that
+        # shared name is fragile: a stray request under the same model
+        # (a concurrent claude test, or an extra call surfaced by a CLI
+        # bump) drains the single queued marker before the recall turn
+        # fires, and the recall then falls through to the mock default.
+        # Claim the recall queue by a token unique to the recall turn
+        # instead (the #523 content-routing "match"), so only that
+        # request can draw it, independent of the model name.
+        recall_token = f"recall-{uid}"
         reset_mock_llm(mock_llm_server_url)
         configure_mock_llm(
             mock_llm_server_url,
@@ -121,12 +130,14 @@ def test_switch_agent_in_place_carries_history(
             key=source_model,
         )
         # The switch passes the prior transcript as context to the first
-        # real LLM call (the recall turn itself) — no separate replay
-        # request is made. Queue only the marker for the recall turn.
+        # real LLM call (the recall turn itself), no separate replay
+        # request. Queue the marker for the recall turn, claimed by the
+        # recall-only token.
         configure_mock_llm(
             mock_llm_server_url,
             [{"text": marker}],
-            key=target_model,
+            key=f"switch-tgt-{uid}",
+            match=recall_token,
         )
     else:
         source_agent = claude_coder_agent
@@ -164,13 +175,18 @@ def test_switch_agent_in_place_carries_history(
 
     # 3. Recall on the NEW agent, SAME session. Only possible if the prior
     # transcript was replayed as context to the switched-in agent.
+    recall_prompt = (
+        "Earlier in this conversation I gave you a code word to remember. "
+        "Reply with exactly that code word and nothing else."
+    )
+    if using_mock_llm:
+        # Carry the recall-only token so this request claims its own mock
+        # queue regardless of the shared target model name.
+        recall_prompt = f"{recall_prompt} ({recall_token})"
     rid_2 = send_user_message_to_session(
         http_client,
         session_id=session_id,
-        content=(
-            "Earlier in this conversation I gave you a code word to remember. "
-            "Reply with exactly that code word and nothing else."
-        ),
+        content=recall_prompt,
     )
     body_2 = poll_session_until_terminal(
         http_client, session_id=session_id, response_id=rid_2, timeout=180
