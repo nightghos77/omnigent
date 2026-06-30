@@ -599,33 +599,33 @@ def build_llm_judge(  # type: ignore[explicit-any]  # executor_config is a YAML-
     return LLMJudge(config, effective_client)
 
 
-def resolve_advisor_mode(spec_mode: str, override: str | None) -> str | None:  # noqa: ARG001
+def resolve_advisor_mode(spec_mode: str, override: str | None) -> str | None:
     """
     Resolve the effective advisor mode for a turn.
 
-    The TOGGLE is the source of truth: the UI presents an unset override
-    as off, so an unset override must BEHAVE as off — a spec-default
-    advise mode running shadow verdicts under an off-looking toggle
-    reads as breakage. The judge runs only when the button is on.
+    Precedence: per-session override > spec marker. The toggle is named
+    "Cost Optimized", so turning it ON ESCALATES to optimize (apply the
+    verdict) even on an advise-default spec — that is the shadow→apply
+    rollout lever. Turning it OFF disables the advisor for the session.
 
     :param spec_mode: The mode the spec marker configured, one of
         :data:`~omnigent.cost_plan.ADVISOR_MODES` (``"advise"`` /
         ``"optimize"``). The marker parser rejects anything else, so a
-        present marker always has a real mode here; it is kept for the
-        on-escalation contract (and a future opt-in default).
+        present marker always has a real mode here.
     :param override: The session's ``cost_control_mode_override`` —
-        ``"on"`` (run + apply), anything else (``"off"`` / ``None`` /
-        absent) = advisor off, matching what the toggle displays.
-    :returns: ``"optimize"`` when the toggle is on, else ``None``
-        (no judge call, no chips).
+        ``"on"`` (escalate to optimize), ``"off"`` (disable for this
+        session), or ``None`` / absent (defer to *spec_mode*).
+    :returns: The effective mode (``"advise"`` / ``"optimize"``), or
+        ``None`` when the advisor is off this turn (no judge call).
     """
+    if override == "off":
+        return None
     if override == "on":
         # "on" = apply: escalate advise→optimize so the user toggle has the
-        # effect its name implies.
+        # effect its "Cost Optimized" name implies.
         return "optimize"
-    # "off", null, absent, or anything unexpected: the toggle displays off,
-    # so the advisor IS off.
-    return None
+    # null / absent / any unexpected value: defer to the spec marker.
+    return spec_mode
 
 
 __all__ = [
