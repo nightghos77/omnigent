@@ -8501,17 +8501,12 @@ async def _forward_event_to_runner(
             conversation_store.get_conversation, conv.parent_conversation_id
         )
         _parent_routing_on = (
-            _parent_conv is not None
-            and _parent_conv.cost_control_mode_override == "on"
+            _parent_conv is not None and _parent_conv.cost_control_mode_override == "on"
         )
     _routing_enabled = (
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
     ) or _parent_routing_on
-    if (
-        effective_runner_override is None
-        and _routing_enabled
-        and body.type == "message"
-    ):
+    if effective_runner_override is None and _routing_enabled and body.type == "message":
         from omnigent.server.smart_routing import route_turn
 
         _harness = _resolve_harness(conv)
@@ -12683,9 +12678,7 @@ async def _handle_advise_models_mcp(
     caps = get_caps()
     routing_client = caps.routing_client
     if routing_client is None:
-        return _mcp_tool_result(
-            rpc_id, json.dumps({"router_on": False, "recommendations": []})
-        )
+        return _mcp_tool_result(rpc_id, json.dumps({"router_on": False, "recommendations": []}))
 
     from omnigent.model_catalog import spec_harness
     from omnigent.server.smart_routing import infer_tiers
