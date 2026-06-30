@@ -24,6 +24,7 @@ from collections.abc import Callable
 
 from omnigent.spec.types import SkillSpec
 from omnigent.tools.base import Tool
+from omnigent.tools.builtins.advise_models import SysAdviseModelsTool
 from omnigent.tools.builtins.agents import (
     SysAgentDownloadTool,
     SysAgentGetTool,
@@ -35,7 +36,6 @@ from omnigent.tools.builtins.async_inbox import (
     SysReadInboxTool,
 )
 from omnigent.tools.builtins.list_comments import ListCommentsTool
-from omnigent.tools.builtins.advise_models import SysAdviseModelsTool
 from omnigent.tools.builtins.list_models import SysListModelsTool
 from omnigent.tools.builtins.load_skill import (
     LoadSkillTool,
@@ -67,9 +67,9 @@ __all__ = [
     "BUILTIN_NAMES",
     "INSTANTIABLE_BUILTINS",
     "ListCommentsTool",
-    "SysAdviseModelsTool",
     "LoadSkillTool",
     "ReadSkillFileTool",
+    "SysAdviseModelsTool",
     "SysAgentDownloadTool",
     "SysAgentGetTool",
     "SysAgentListTool",

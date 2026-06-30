@@ -103,19 +103,6 @@ def test_infer_tiers_openai_agents() -> None:
     assert tiers is not None
 
 
-def test_infer_tiers_codex() -> None:
-    """codex maps to the gpt tier template."""
-    tiers = infer_tiers("codex")
-    assert tiers is not None
-    assert any("gpt" in m for m in tiers["cheap"])
-    assert any("gpt-5-5" in m for m in tiers["expensive"])
-
-
-def test_infer_tiers_openai_agents() -> None:
-    tiers = infer_tiers("openai-agents")
-    assert tiers is not None
-
-
 def test_infer_tiers_unknown_harness() -> None:
     """Unknown harnesses return None (not routable)."""
     assert infer_tiers("cursor") is None
