@@ -38,6 +38,7 @@ from tests.e2e.conftest import (
     register_inline_agent,
     reset_mock_llm,
     send_user_message_to_session,
+    set_fallback_mock_llm,
 )
 
 # The fork-switch TARGET. Only BUILT-IN agents (``session_id IS NULL``)
@@ -416,31 +417,35 @@ def test_fork_with_agent_switch_carries_history(
             mock_llm_base_url=f"{mock_llm_server_url}/v1",
         )
         # The sdk-chat-builtin built-in uses the SHARED model name
-        # "claude-sonnet-4-20250514". Keying the recall queue on that
-        # shared name is fragile: a stray request under the same model
-        # (a concurrent claude test, or an extra call surfaced by a CLI
-        # bump) drains the single queued codeword before the recall turn
-        # fires, and the recall then falls through to the mock default.
-        # Claim the recall queue by a token unique to the recall turn
-        # instead (the #523 content-routing "match"), so only that
-        # request can draw it, independent of the model name.
+        # "claude-sonnet-4-20250514", and the recall turn makes MORE than
+        # one call to it: newer claude-code follows the recall with a
+        # skills/system-reminder call. Two fragilities follow, both fixed
+        # here:
+        #   1. Keying the recall queue on the shared model name lets a
+        #      stray request under the same model drain it. Instead claim
+        #      the queue by a token unique to the recall turn (the #523
+        #      content-routing "match"), carried only in the recall
+        #      message, so only this turn's calls can draw it.
+        #   2. A single queued entry is consumed by the first recall call;
+        #      the follow-up call then falls through to the mock's default
+        #      "Mock LLM response", which becomes the final assistant text
+        #      and fails the assertion. A fallback on the same key answers
+        #      every recall-turn call with the codeword, robust to count.
         recall_token = f"recall-{uid}"
+        recall_key = f"fork-tgt-{uid}"
         reset_mock_llm(mock_llm_server_url)
         configure_mock_llm(
             mock_llm_server_url,
             [{"text": "OK"}],
             key=source_model,
         )
-        # The fork+switch passes the copied transcript as context to the
-        # first real LLM call (the recall turn itself), no separate
-        # replay request. Queue the codeword for the recall turn, claimed
-        # by the recall-only token.
         configure_mock_llm(
             mock_llm_server_url,
             [{"text": _CODEWORD_1}],
-            key=f"fork-tgt-{uid}",
+            key=recall_key,
             match=recall_token,
         )
+        set_fallback_mock_llm(mock_llm_server_url, key=recall_key, text=_CODEWORD_1)
     else:
         source_agent = claude_coder_agent
 

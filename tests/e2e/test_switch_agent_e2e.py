@@ -33,6 +33,7 @@ from tests.e2e.conftest import (
     register_inline_agent,
     reset_mock_llm,
     send_user_message_to_session,
+    set_fallback_mock_llm,
 )
 from tests.e2e.helpers import final_assistant_text
 
@@ -114,31 +115,35 @@ def test_switch_agent_in_place_carries_history(
             mock_llm_base_url=f"{mock_llm_server_url}/v1",
         )
         # The sdk-chat-builtin built-in uses the SHARED model name
-        # "claude-sonnet-4-20250514". Keying the recall queue on that
-        # shared name is fragile: a stray request under the same model
-        # (a concurrent claude test, or an extra call surfaced by a CLI
-        # bump) drains the single queued marker before the recall turn
-        # fires, and the recall then falls through to the mock default.
-        # Claim the recall queue by a token unique to the recall turn
-        # instead (the #523 content-routing "match"), so only that
-        # request can draw it, independent of the model name.
+        # "claude-sonnet-4-20250514", and the recall turn makes MORE than
+        # one call to it: newer claude-code follows the recall with a
+        # skills/system-reminder call. Two fragilities follow, both fixed
+        # here:
+        #   1. Keying the recall queue on the shared model name lets a
+        #      stray request under the same model drain it. Instead claim
+        #      the queue by a token unique to the recall turn (the #523
+        #      content-routing "match"), carried only in the recall
+        #      message, so only this turn's calls can draw it.
+        #   2. A single queued entry is consumed by the first recall call;
+        #      the follow-up call then falls through to the mock's default
+        #      "Mock LLM response", which becomes the final assistant text
+        #      and fails the assertion. A fallback on the same key answers
+        #      every recall-turn call with the marker, robust to the count.
         recall_token = f"recall-{uid}"
+        recall_key = f"switch-tgt-{uid}"
         reset_mock_llm(mock_llm_server_url)
         configure_mock_llm(
             mock_llm_server_url,
             [{"text": "ACK"}],
             key=source_model,
         )
-        # The switch passes the prior transcript as context to the first
-        # real LLM call (the recall turn itself), no separate replay
-        # request. Queue the marker for the recall turn, claimed by the
-        # recall-only token.
         configure_mock_llm(
             mock_llm_server_url,
             [{"text": marker}],
-            key=f"switch-tgt-{uid}",
+            key=recall_key,
             match=recall_token,
         )
+        set_fallback_mock_llm(mock_llm_server_url, key=recall_key, text=marker)
     else:
         source_agent = claude_coder_agent
 
@@ -193,34 +198,6 @@ def test_switch_agent_in_place_carries_history(
     )
     assert body_2["status"] == "completed", f"recall turn failed: {body_2.get('error')}"
     text = final_assistant_text(body_2).upper()
-
-    # TEMP DIAGNOSTIC (remove before merge): dump every request the mock saw
-    # so we can see the recall call's model + whether the recall token made
-    # it into the user input, and how many calls hit the target.
-    if using_mock_llm:
-        captured = httpx.get(f"{mock_llm_server_url}/mock/requests", timeout=10).json()
-        reqs = captured.get("requests", [])
-        print(f"\n=== MOCK REQUESTS ({len(reqs)}) marker={marker} token={recall_token} ===")
-        for _i, _r in enumerate(reqs):
-            _model = _r.get("model") if isinstance(_r, dict) else None
-            _ut: list[str] = []
-            for _k in ("input", "messages"):
-                for _it in (_r.get(_k) or []) if isinstance(_r, dict) else []:
-                    if isinstance(_it, dict) and _it.get("role") == "user":
-                        _c = _it.get("content")
-                        if isinstance(_c, str):
-                            _ut.append(_c)
-                        elif isinstance(_c, list):
-                            _ut.extend(
-                                str(_b.get("text", "")) for _b in _c if isinstance(_b, dict)
-                            )
-            _joined = " ".join(_ut)
-            print(
-                f"[{_i}] model={_model!r} top_keys={sorted(_r.keys()) if isinstance(_r, dict) else _r} "
-                f"has_token={recall_token in _joined} has_marker={marker in _joined} "
-                f"user={_joined[:240]!r}"
-            )
-
     assert marker in text, (
         f"switched agent did not recall {marker!r} (got {text!r}) — the prior "
         "transcript was not carried into the new agent on switch"
