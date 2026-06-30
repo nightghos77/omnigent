@@ -477,6 +477,12 @@ class SqlAlchemyConversationStore(ConversationStore):
         super().__init__(storage_location)
         self._engine = get_or_create_engine(storage_location)
         self._session = make_managed_session_maker(self._engine)
+        # Immediate session: used for read-modify-write operations that must be
+        # atomic. On SQLite, ``BEGIN IMMEDIATE`` acquires the write lock before
+        # the first read, preventing ``SQLITE_BUSY_SNAPSHOT`` under concurrent
+        # writers. On other dialects ``immediate=True`` is a no-op — those paths
+        # use ``SELECT … FOR UPDATE`` via ``_supports_for_update`` instead.
+        self._session_immediate = make_managed_session_maker(self._engine, immediate=True)
         self._supports_for_update = self._engine.dialect.name != "sqlite"
         # SQLite rowid is monotonically increasing absent deletions; it serves
         # as an insertion-ordered tiebreaker for timestamp ties. Note: without
@@ -940,13 +946,19 @@ class SqlAlchemyConversationStore(ConversationStore):
         """
         Atomically increment the session usage for one conversation.
 
-        Runs the read-modify-write in a single SQLAlchemy session (one DB
-        transaction). On every dialect except SQLite, ``SELECT ... FOR UPDATE``
-        locks the row for the duration of the transaction so a concurrent second
-        writer blocks until this one commits, preventing lost updates (#9). This
-        covers PostgreSQL, MySQL, and MariaDB. On SQLite the single-writer
-        exclusive write lock serialises concurrent writers naturally — ``FOR
-        UPDATE`` is not supported and not needed.
+        Runs the read-modify-write in a single database transaction, serialising
+        concurrent writers via two complementary mechanisms:
+
+        - **PostgreSQL / MySQL / MariaDB**: ``SELECT … FOR UPDATE`` acquires an
+          exclusive row lock for the duration of the transaction; a concurrent
+          second writer blocks until this one commits.
+        - **SQLite**: the session is opened with ``BEGIN IMMEDIATE``
+          (``self._session_immediate``), which acquires SQLite's write lock
+          *before* the first read. A plain ``SELECT``-then-``UPDATE`` in a
+          deferred transaction would expose concurrent writers to
+          ``SQLITE_BUSY_SNAPSHOT`` because each writer takes a read snapshot
+          first; ``BEGIN IMMEDIATE`` prevents that by serialising at lock
+          acquisition time.
 
         :param conversation_id: The conversation to update.
         :param delta: Usage increments (see
@@ -957,14 +969,9 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         from omnigent.stores.conversation_store import apply_session_usage_delta
 
-        with self._session() as session:
-            dialect = session.bind.dialect.name if session.bind is not None else ""
+        with self._session_immediate() as session:
             q = select(SqlConversation).where(SqlConversation.id == conversation_id)
-            # SQLite serialises all writes via an exclusive write lock and does
-            # not support SELECT FOR UPDATE. Every other dialect (PostgreSQL,
-            # MySQL, MariaDB, …) supports it and needs it to prevent concurrent
-            # writers from interleaving their read-modify-write cycles.
-            if dialect != "sqlite":
+            if self._supports_for_update:
                 q = q.with_for_update()
             row = session.scalars(q).first()
             current: dict[str, Any] = (
