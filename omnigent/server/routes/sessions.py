@@ -8493,19 +8493,20 @@ async def _forward_event_to_runner(
     # the entire session.  The verdict is persisted as model_override
     # on the conversation so subsequent turns reuse it without another
     # judge call.
-    # Route if: top-level session with toggle on, OR sub-agent session
-    # with no explicit model (routing is globally enabled server-side).
-    try:
-        from omnigent.runtime._globals import _caps as _routing_caps
-
-        _server_routing_on = _routing_caps is not None and _routing_caps.routing_client is not None
-    except ImportError:
-        _server_routing_on = False
+    # Route if: toggle is on for this session (top-level), OR this is a
+    # sub-agent and its parent session has the toggle on.
+    _parent_routing_on = False
+    if conv.parent_conversation_id is not None:
+        _parent_conv = await asyncio.to_thread(
+            conversation_store.get_conversation, conv.parent_conversation_id
+        )
+        _parent_routing_on = (
+            _parent_conv is not None
+            and _parent_conv.cost_control_mode_override == "on"
+        )
     _routing_enabled = (
         conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
-    ) or (
-        conv.parent_conversation_id is not None and _server_routing_on
-    )
+    ) or _parent_routing_on
     if (
         effective_runner_override is None
         and _routing_enabled
@@ -8718,17 +8719,18 @@ async def _dispatch_session_event_to_runner(
         # the toggle is on and no model_override is set, call the
         # judge and persist the chosen model on the conversation row.
         # The native CLI reads model_override from the session.
-        try:
-            from omnigent.runtime._globals import _caps as _routing_caps_n
-
-            _server_routing_on_n = (
-                _routing_caps_n is not None and _routing_caps_n.routing_client is not None
+        _native_parent_routing_on = False
+        if conv.parent_conversation_id is not None:
+            _native_parent_conv = await asyncio.to_thread(
+                conversation_store.get_conversation, conv.parent_conversation_id
             )
-        except ImportError:
-            _server_routing_on_n = False
+            _native_parent_routing_on = (
+                _native_parent_conv is not None
+                and _native_parent_conv.cost_control_mode_override == "on"
+            )
         _native_routing_enabled = (
             conv.cost_control_mode_override == "on" and conv.parent_conversation_id is None
-        ) or (conv.parent_conversation_id is not None and _server_routing_on_n)
+        ) or _native_parent_routing_on
         if conv.model_override is None and _native_routing_enabled:
             from omnigent.server.smart_routing import route_turn
 
