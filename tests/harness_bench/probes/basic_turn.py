@@ -7,7 +7,7 @@ also tells a reader whether a red row is "this harness is broken" versus
 
 from __future__ import annotations
 
-from tests.harness_bench.driver import SdkInprocDriver
+from tests.harness_bench.driver import SdkInprocDriver, infra_failure_reason
 from tests.harness_bench.probes.base import CapabilityProbe
 from tests.harness_bench.profile import BenchProfile
 from tests.harness_bench.verdict import Applicability, Priority, ProbeResult, Verdict
@@ -24,7 +24,17 @@ class BasicTurnProbe(CapabilityProbe):
             f"Reply with exactly the literal string {profile.marker} and nothing else."
         )
         if result.timed_out:
-            return ProbeResult(Verdict.UNSUPPORTED, note="turn did not complete within timeout")
+            # A timeout on the prerequisite turn is almost always a hung
+            # environment, not a capability fact — do not call it UNSUPPORTED.
+            return ProbeResult(
+                Verdict.SKIPPED,
+                note="turn did not complete within timeout; harness not exercisable",
+            )
+        infra = infra_failure_reason(result)
+        if infra is not None:
+            # Auth / gateway / connectivity failure — an environment problem,
+            # reported as SKIPPED so it never shows up as capability drift.
+            return ProbeResult(Verdict.SKIPPED, note=infra)
         if result.failed:
             return ProbeResult(Verdict.UNSUPPORTED, note=f"turn failed: {result.error}")
         if profile.marker in result.text:

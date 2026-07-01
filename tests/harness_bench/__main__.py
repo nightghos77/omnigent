@@ -94,7 +94,20 @@ def main(argv: list[str] | None = None) -> int:
         print("--live requires --profile <name>", file=sys.stderr)
         return 2
 
-    matrix = asyncio.run(run_bench(profiles, databricks_profile=args.profile, live=live))
+    # Live runs make network calls that can take tens of seconds per turn.
+    # Stream progress to stderr (report goes to stdout) so the run is not
+    # silent; offline is fast enough to stay quiet.
+    def _progress(line: str) -> None:
+        print(line, file=sys.stderr, flush=True)
+
+    matrix = asyncio.run(
+        run_bench(
+            profiles,
+            databricks_profile=args.profile,
+            live=live,
+            progress=_progress if live else None,
+        )
+    )
     print(render_json(matrix) if args.json else render_markdown(matrix), end="")
     # A drift is a non-zero exit so CI / scripts notice without parsing output.
     return 1 if matrix.has_drift else 0

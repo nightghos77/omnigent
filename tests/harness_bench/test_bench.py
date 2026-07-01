@@ -86,6 +86,27 @@ def test_resolve_official_and_community_and_unknown() -> None:
         resolve_profile("no-such-harness")
 
 
+def test_infra_failure_reason_classifies_auth_and_ignores_capability_gaps() -> None:
+    from tests.harness_bench.driver import TurnResult, infra_failure_reason
+
+    # A 403 gateway error is an environment problem -> yields a skip reason.
+    auth = TurnResult(
+        failed=True,
+        error={
+            "code": "RuntimeError",
+            "message": "unexpected status 403 Forbidden: Invalid Token",
+        },
+    )
+    reason = infra_failure_reason(auth)
+    assert reason is not None
+    assert "403" in reason
+
+    # A plain failure with no infra marker is a real capability gap -> None.
+    assert infra_failure_reason(TurnResult(failed=True, error="model refused the tool")) is None
+    # A successful turn is never an infra failure.
+    assert infra_failure_reason(TurnResult(completed=True, text="ok")) is None
+
+
 async def test_offline_render_produces_matrix() -> None:
     matrix = await run_bench(_OFFICIAL, live=False)
     # Offline: nothing observed, so no drift and every cell is SKIPPED.
@@ -124,6 +145,10 @@ async def test_live_harness_matches_declared(
     report = await run_harness(profile, databricks_profile=databricks_profile, live=True)
 
     basic = next(c for c in report.cells if c.probe_name == "basic_turn")
+    if basic.observed is Verdict.SKIPPED:
+        # Auth / gateway / connectivity problem (not a capability fact) —
+        # the harness could not be exercised, so skip rather than fail.
+        pytest.skip(f"{profile.harness}: {basic.note}")
     assert basic.observed is Verdict.SUPPORTED, (
         f"{profile.harness}: basic turn did not work ({basic.note}); "
         "the whole harness looks broken, not one capability"

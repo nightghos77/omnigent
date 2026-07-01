@@ -18,7 +18,7 @@ gateway to reject unknown ids promptly.
 from __future__ import annotations
 
 from omnigent.model_override import model_family_mismatch, validate_model_override
-from tests.harness_bench.driver import SdkInprocDriver
+from tests.harness_bench.driver import SdkInprocDriver, infra_failure_reason
 from tests.harness_bench.probes.base import CapabilityProbe
 from tests.harness_bench.profile import BenchProfile
 from tests.harness_bench.verdict import Applicability, Priority, ProbeResult, Verdict
@@ -54,6 +54,9 @@ class ModelOverrideProbe(CapabilityProbe):
                 note=f"turn routed on caller-specified model {profile.model!r}",
                 detail=detail,
             )
+        infra = infra_failure_reason(result)
+        if infra is not None:
+            return ProbeResult(Verdict.SKIPPED, note=infra, detail=detail)
         if result.timed_out:
             return ProbeResult(Verdict.SKIPPED, note="override turn timed out", detail=detail)
         return ProbeResult(

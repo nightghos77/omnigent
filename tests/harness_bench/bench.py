@@ -8,12 +8,24 @@ subprocess and gateway load bounded.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tests.harness_bench.driver import SdkInprocDriver
 from tests.harness_bench.probes import ALL_PROBES, CapabilityProbe
 from tests.harness_bench.profile import BenchProfile
 from tests.harness_bench.verdict import Applicability, Priority, ProbeResult, Verdict, reconcile
+
+# A progress sink: the bench calls it with human-readable status lines as it
+# spawns harnesses and runs probes. ``None`` (the default) stays silent, which
+# is what the pytest layer wants; the CLI passes a stderr writer so a live run
+# is not silent for minutes.
+Progress = Callable[[str], None]
+
+# The prerequisite probe: if it does not pass, the harness cannot be exercised
+# at all, so the remaining probes are skipped rather than run against a dead
+# turn (which would otherwise emit misleading UNSUPPORTED/DRIFT noise).
+_PREREQ_PROBE = "basic_turn"
 
 
 @dataclass(frozen=True)
@@ -115,12 +127,18 @@ def _uniform_report(
     return HarnessReport(profile=profile, cells=cells, skipped_reason=skipped_reason)
 
 
+def _emit(progress: Progress | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
+
+
 async def run_harness(
     profile: BenchProfile,
     *,
     probes: list[CapabilityProbe] | None = None,
     databricks_profile: str | None = None,
     live: bool = True,
+    progress: Progress | None = None,
 ) -> HarnessReport:
     """Run every applicable probe against one harness.
 
@@ -131,6 +149,8 @@ async def run_harness(
     :param live: When ``False``, produce a declared-only report (every
         cell ``SKIPPED`` with an "offline" note) without spawning
         anything — used for a fast ``--list``/dry render.
+    :param progress: Optional status sink called with human-readable lines
+        as the harness spawns and each probe runs. ``None`` stays silent.
     :returns: The :class:`HarnessReport`.
     """
     probes = probes if probes is not None else ALL_PROBES
@@ -140,22 +160,44 @@ async def run_harness(
 
     unavailable = SdkInprocDriver.unavailable(profile, databricks_profile=databricks_profile)
     if unavailable is not None:
+        _emit(progress, f"[{profile.harness}] skipped: {unavailable}")
         return _uniform_report(
             profile, probes, ProbeResult.skipped(unavailable), skipped_reason=unavailable
         )
 
     assert databricks_profile is not None  # guaranteed by the unavailable() check
+    _emit(
+        progress,
+        f"[{profile.harness}] launching wrap subprocess "
+        f"(transport={profile.transport}, model={profile.model}); first turn may take ~10-30s...",
+    )
     cells: list[CellResult] = []
     async with SdkInprocDriver(profile, databricks_profile=databricks_profile) as driver:
+        prereq_skip: str | None = None
         for probe in probes:
             if not _applicable(probe, profile):
                 cells.append(_cell(probe, profile, ProbeResult.not_applicable()))
                 continue
-            try:
-                observed = await probe.run(driver, profile)
-            except Exception as exc:
-                observed = ProbeResult(Verdict.UNKNOWN, note=f"probe raised: {exc!r}")
-            cells.append(_cell(probe, profile, observed))
+            if prereq_skip is not None:
+                observed = ProbeResult.skipped(prereq_skip)
+                _emit(progress, f"[{profile.harness}]   {probe.title}: skipped (prerequisite)")
+            else:
+                _emit(progress, f"[{profile.harness}]   {probe.title}: running...")
+                try:
+                    observed = await probe.run(driver, profile)
+                except Exception as exc:
+                    observed = ProbeResult(Verdict.UNKNOWN, note=f"probe raised: {exc!r}")
+                _emit(
+                    progress,
+                    f"[{profile.harness}]   {probe.title}: {observed.verdict.name}"
+                    + (f" ({observed.note})" if observed.note else ""),
+                )
+            cell = _cell(probe, profile, observed)
+            cells.append(cell)
+            # If the prerequisite turn did not pass, short-circuit the rest:
+            # they would only re-hit the same failure and pollute the matrix.
+            if probe.name == _PREREQ_PROBE and cell.observed is not Verdict.SUPPORTED:
+                prereq_skip = f"prerequisite '{probe.title}' did not pass ({observed.note})"
     return HarnessReport(profile=profile, cells=cells)
 
 
@@ -165,10 +207,17 @@ async def run_bench(
     probes: list[CapabilityProbe] | None = None,
     databricks_profile: str | None = None,
     live: bool = True,
+    progress: Progress | None = None,
 ) -> BenchMatrix:
     """Run the bench across *profiles*, sequentially, into a :class:`BenchMatrix`."""
     reports = [
-        await run_harness(p, probes=probes, databricks_profile=databricks_profile, live=live)
+        await run_harness(
+            p,
+            probes=probes,
+            databricks_profile=databricks_profile,
+            live=live,
+            progress=progress,
+        )
         for p in profiles
     ]
     return BenchMatrix(reports=reports)

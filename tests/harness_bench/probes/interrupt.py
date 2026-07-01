@@ -8,7 +8,7 @@ long reply; one that honors it terminates with far less output.
 
 from __future__ import annotations
 
-from tests.harness_bench.driver import SdkInprocDriver
+from tests.harness_bench.driver import SdkInprocDriver, infra_failure_reason
 from tests.harness_bench.probes.base import CapabilityProbe
 from tests.harness_bench.profile import BenchProfile
 from tests.harness_bench.verdict import Applicability, Priority, ProbeResult, Verdict
@@ -38,6 +38,15 @@ class InterruptProbe(CapabilityProbe):
             "failed": result.failed,
             "timed_out": result.timed_out,
         }
+        # The probe posts the interrupt on the FIRST text delta, so a real
+        # interrupt must have streamed at least some text before stopping.
+        # A turn that emitted no text and then errored did not exercise the
+        # interrupt path at all — treat that as unmeasurable, not success.
+        if result.text_delta_count == 0:
+            infra = infra_failure_reason(result)
+            note = infra or "turn produced no text before terminating; interrupt not exercised"
+            return ProbeResult(Verdict.SKIPPED, note=note, detail=detail)
+
         # An honored interrupt makes the stream reach a terminal event
         # (completed or failed/cancelled) promptly — the driver's timeout
         # did NOT fire — while having emitted only a fraction of the ~400

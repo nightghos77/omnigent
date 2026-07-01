@@ -36,6 +36,54 @@ POLICY_DENY = "POLICY_ACTION_DENY"
 
 _CONV_ID = "conv_bench"
 
+# Substrings in a turn error that mean the *environment* is the problem
+# (auth, entitlement, gateway, connectivity) rather than a real capability
+# gap. Turns that fail this way are reported SKIPPED, never UNSUPPORTED, so
+# a bad token or an unentitled gateway route can never masquerade as
+# capability drift.
+_INFRA_ERROR_MARKERS: tuple[str, ...] = (
+    "403",
+    "401",
+    "Forbidden",
+    "Unauthorized",
+    "Invalid Token",
+    "invalid token",
+    "unexpected status",
+    "Connection",
+    "connection",
+    "Temporarily Unavailable",
+    "502",
+    "503",
+    "504",
+)
+
+
+def _error_text(error: object) -> str:
+    """Flatten a turn error (dict or str) into searchable text."""
+    if isinstance(error, dict):
+        return f"{error.get('message', '')} {error.get('code', '')}"
+    return str(error or "")
+
+
+def infra_failure_reason(result: TurnResult) -> str | None:
+    """Return a concise env-skip reason if a turn failed on infra/auth, else ``None``.
+
+    Lets probes distinguish "the gateway rejected us" (an environment
+    problem the operator must fix) from "the harness cannot do this" (a
+    capability fact). Only the latter should ever count as UNSUPPORTED.
+    """
+    if not result.failed:
+        return None
+    text = _error_text(result.error)
+    if not any(marker in text for marker in _INFRA_ERROR_MARKERS):
+        return None
+    for code in ("403", "401"):
+        if code in text:
+            return f"gateway auth failed ({code} Invalid/Forbidden token); re-login the profile"
+    if "unexpected status" in text:
+        return "gateway returned an unexpected status (environment/auth issue)"
+    return "environment/connectivity error reaching the gateway"
+
 
 @dataclass
 class TurnResult:
