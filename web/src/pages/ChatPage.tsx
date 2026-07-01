@@ -5107,6 +5107,15 @@ function AgentPicker({
       : null;
   const hasPickerActions = showAgents || modelOptions.length > 0 || showEffort;
 
+  // Until kiro mirrors its live model (its first session ``.json`` write), there
+  // is no resolved model to show; fall back to the catalog default (e.g. "Auto")
+  // so the trigger reads as a model rather than the harness name ("Kiro").
+  const kiroDefaultOption =
+    modelPickerKind === "kiro"
+      ? (codexModelOptions.find((m) => m.isDefault) ?? codexModelOptions[0])
+      : undefined;
+  const kiroLaunchFallbackLabel = kiroDefaultOption?.displayName ?? kiroDefaultOption?.id;
+
   // Model in foreground (black), effort in muted (grey). Static fallbacks
   // first; the final `else` returns null so a session with nothing to show
   // and nothing to switch doesn't render an empty disabled pill — its
@@ -5136,8 +5145,10 @@ function AgentPicker({
     // spec may carry no executor model and no sticky/override is set), but the
     // dropdown still has model rows to switch. Keep the trigger rendered — and
     // the model dropdown + bare-`/model` open path reachable — with a stable
-    // identity fallback rather than hiding the picker entirely.
-    triggerContent = agentDisplayName ?? "Model";
+    // identity fallback rather than hiding the picker entirely. For kiro, prefer
+    // the catalog default (e.g. "Auto") over the agent name so the launch-window
+    // label reads as a model.
+    triggerContent = kiroLaunchFallbackLabel ?? agentDisplayName ?? "Model";
   } else {
     return null;
   }
