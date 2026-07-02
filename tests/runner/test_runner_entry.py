@@ -394,6 +394,54 @@ def test_managed_mint_factory_recovers_after_transient_boot_failure(
     assert len(calls) == 2  # probe (failed) + successful re-mint
 
 
+def test_managed_mint_factory_declines_at_request_time_and_auth_sends_bare(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-install definitive 400 latches ``declined`` → bare requests.
+
+    The boot-race regression from CI: the runner starts before the server
+    listens, so the construction probe hits a connection error (transient →
+    factory installs), then every request-time mint gets the definitive
+    HTTP 400 of a no-auth server. Without the latch, the factory returns
+    ``None`` forever and ``_RunnerDatabricksAuth`` fails closed — bricking
+    every runner→server callback (``spec_resolver_failed``). With it, the
+    first 400 flips the factory to declined and callbacks go out bare,
+    exactly as if no factory had been installed.
+
+    :param monkeypatch: Pytest environment patch fixture.
+    :returns: None.
+    """
+    calls: list[int] = []
+
+    def _boot_blip_then_refuse(
+        mint_url: str, server_url: str, binding_token: str
+    ) -> tuple[str, float]:
+        """Fail the boot probe with a connection error, then 400 every mint."""
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("server not listening yet")
+        request = httpx.Request("POST", mint_url)
+        raise httpx.HTTPStatusError(
+            "no auth provider", request=request, response=httpx.Response(400, request=request)
+        )
+
+    monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _boot_blip_then_refuse)
+
+    factory = _make_managed_mint_factory("https://s.example.com", "btok")
+    assert factory is not None  # boot blip is transient → installed
+
+    auth = _RunnerDatabricksAuth(factory)
+    request = httpx.Request("GET", "http://server/v1/agents/ag_1/download")
+    sent = next(auth.auth_flow(request))  # must NOT raise (fail closed)
+    assert "Authorization" not in sent.headers  # bare request, like no factory
+
+    # The latch short-circuits: later callbacks never re-hit the endpoint.
+    request2 = httpx.Request("GET", "http://server/v1/responses/turn_1")
+    sent2 = next(auth.auth_flow(request2))
+    assert "Authorization" not in sent2.headers
+    assert len(calls) == 2  # probe blip + the single definitive 400
+
+
 def test_mint_managed_owner_token_posts_binding_token_and_parses_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
