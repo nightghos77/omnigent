@@ -20,6 +20,15 @@ FROM ghcr.io/omnigent-ai/omnigent-server@sha256:dabbb00deafa796c5ab75a31785285f7
 # baked venv at /opt/venv, so this lands in the same interpreter the server runs.
 RUN pip install --no-cache-dir "modal>=1.0,<2"
 
+# Raise the managed-host online timeout from 120s -> 300s. A cold Modal sandbox
+# (first boot + multi-GB host-image pull + private-repo clone) can exceed 120s
+# and surface as "runner didn't come online in time". The value is a hardcoded
+# constant with no env override, so we patch the editable install in place. The
+# grep gate fails the build loudly if upstream changes the line (no silent no-op).
+RUN grep -q 'MANAGED_HOST_ONLINE_TIMEOUT_S = 120' /build/omnigent/server/managed_hosts.py \
+    && sed -i 's/MANAGED_HOST_ONLINE_TIMEOUT_S = 120/MANAGED_HOST_ONLINE_TIMEOUT_S = 300/' \
+       /build/omnigent/server/managed_hosts.py
+
 # /app is baked into the image (the server's WORKDIR); /data is the runtime disk
 # mount, so config MUST live outside /data or the mount would shadow it.
 COPY deploy/render/server-config.yaml /app/config.yaml
