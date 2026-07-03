@@ -16,7 +16,7 @@ sandbox:
   # Public URL of THIS server that each sandbox dials back to. NOT a secret.
   # Set to your Render service URL (https://<service>.onrender.com) or a custom
   # domain, then commit. Required: the server rejects a sandbox: block without it.
-  server_url: https://REPLACE-WITH-YOUR-RENDER-URL.onrender.com
+  server_url: https://omnigent-74zq.onrender.com
 
   modal:
     # Official prebaked host image — no build/push needed. Override only if you
