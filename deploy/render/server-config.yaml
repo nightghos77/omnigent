@@ -19,9 +19,12 @@ sandbox:
   server_url: https://omnigent-74zq.onrender.com
 
   modal:
-    # Official prebaked host image — no build/push needed. Override only if you
-    # maintain your own host image.
-    image: ghcr.io/omnigent-ai/omnigent-host:latest
+    # Official prebaked host image, pinned to an immutable digest. Pinning keeps
+    # Modal's per-workspace image cache stable — a moving :latest tag would
+    # invalidate the cache and force a cold multi-GB pull that can blow the 120s
+    # host-online timeout. Bump = a tracked commit updating this digest.
+    #   :latest resolved 2026-07-03 -> sha256:7ceb4b0f...ef3625
+    image: ghcr.io/omnigent-ai/omnigent-host@sha256:7ceb4b0f11c5ccc8a9d7c71b574a5a0575e172709802931ef45ff62fc2ef3625
 
     # Modal secret holding the harness LLM keys injected into every sandbox.
     # Create it once (see deploy/render/DEPLOY.md):
