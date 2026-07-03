@@ -1,0 +1,29 @@
+# Source-controlled Omnigent server config (non-secret settings only).
+#
+# Loaded via OMNIGENT_CONFIG=/app/config.yaml, set in deploy/render/Dockerfile.
+# Secrets never live here: DATABASE_URL, MODAL_TOKEN_ID/SECRET, and the
+# cookie/OIDC secrets stay in the environment (Render dashboard, sync:false).
+#
+# This file exists so managed-host (Modal) execution is declarative and in git.
+# Built-in `accounts` auth needs no config here — it's wired by env in render.yaml.
+
+# Managed hosts: the server provisions a disposable Modal sandbox per session
+# and runs the agent there, so no machine has to stay online. A session with
+# {"host_type": "managed"} (New Chat -> managed in the web UI) uses this.
+sandbox:
+  provider: modal
+
+  # Public URL of THIS server that each sandbox dials back to. NOT a secret.
+  # Set to your Render service URL (https://<service>.onrender.com) or a custom
+  # domain, then commit. Required: the server rejects a sandbox: block without it.
+  server_url: https://REPLACE-WITH-YOUR-RENDER-URL.onrender.com
+
+  modal:
+    # Official prebaked host image — no build/push needed. Override only if you
+    # maintain your own host image.
+    image: ghcr.io/omnigent-ai/omnigent-host:latest
+
+    # Modal secret holding the harness LLM keys injected into every sandbox.
+    # Create it once (see deploy/render/DEPLOY.md):
+    #   modal secret create omnigent-llm OMNIGENT_ANTHROPIC_API_KEY=sk-ant-...
+    secrets: [omnigent-llm]

@@ -1,17 +1,22 @@
-# Render blueprint: web service (pulls the CI image — it ships the gitignored
-# web UI bundle a source build can't) + managed Postgres + data disk.
-# Defaults to built-in `accounts` auth (multi-user, no IdP). Full walkthrough:
-# deploy/render/README.md.
+# Render blueprint (source-controlled deploy).
+#
+# Builds a thin overlay image (deploy/render/Dockerfile) FROM the official,
+# digest-pinned server image and bakes in deploy/render/server-config.yaml so
+# the Modal managed-host config lives in git. The web UI ships in the base image
+# (an overlay build, not a from-source build, so nothing is lost).
+#
+# Provisions: web service + managed Postgres + 10GB data disk.
+# Auth: built-in `accounts` (multi-user, invite-only) — no IdP needed.
+# Secrets (Modal tokens, optional OIDC) are declared here as sync:false and set
+# in the Render dashboard; nothing secret is committed. See deploy/render/DEPLOY.md.
 
 services:
   - type: web
     name: omnigent
-    runtime: image
-    image:
-      url: ghcr.io/omnigent-ai/omnigent-server:latest
-      # While the package is private, add image.creds.fromRegistryCreds (a GHCR
-      # read:packages token registered in the Render dashboard). Drop once public.
-    plan: starter
+    runtime: docker
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    plan: starter          # 512MB. Bump to `standard` (2GB) if the server OOM-loops.
     healthCheckPath: /health
     disk:
       name: artifact-data
@@ -33,15 +38,21 @@ services:
         value: accounts
       - key: OMNIGENT_ACCOUNTS_AUTO_OPEN
         value: "0"
+      # Modal provider credentials — the server reads these to provision managed
+      # sandboxes. Secrets: set the values in the Render dashboard (not in git).
+      # Get them from https://modal.com/settings/tokens (`modal token new`).
+      - key: MODAL_TOKEN_ID
+        sync: false
+      - key: MODAL_TOKEN_SECRET
+        sync: false
       # No COOKIE_SECRET or BASE_URL here: the entrypoint mints a hex cookie
-      # secret on the disk and auto-detects the public URL from RENDER_EXTERNAL_URL.
-      # (Render's generateValue isn't hex, which the server's bytes.fromhex rejects.)
-      # So this blueprint deploys with zero prompts — true 1-click.
+      # secret on the disk and auto-detects the public URL from RENDER_EXTERNAL_URL,
+      # so this blueprint deploys with zero prompts.
       #
       # To use your own IdP instead of built-in accounts, set
-      # OMNIGENT_AUTH_PROVIDER=oidc and add the OMNIGENT_OIDC_* vars
-      # (including OMNIGENT_OIDC_COOKIE_SECRET = `openssl rand -hex 32`) in the
-      # Render dashboard. See deploy/render/README.md.
+      # OMNIGENT_AUTH_PROVIDER=oidc and add the OMNIGENT_OIDC_* vars (including
+      # OMNIGENT_OIDC_COOKIE_SECRET = `openssl rand -hex 32`) here as sync:false.
+      # See deploy/render/README.md.
 
 databases:
   - name: omnigent-db
